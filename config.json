@@ -1,0 +1,10 @@
+{
+  "adsFolder": "ads",
+  "durationMs": 6000,
+  "fit": "contain",
+  "bg": "#000000",
+  "pollIntervalMs": 300000,
+  "fallbackImages": [
+    "ad.png"
+  ]
+}

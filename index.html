@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Aggressive no-cache for TV/players -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+
+  <title>LED Ad Loop</title>
+
+  <style>
+    :root{
+      --bg:#000;
+      --fit:contain;
+    }
+    html, body{
+      margin:0;
+      padding:0;
+      width:100%;
+      height:100%;
+      background:var(--bg);
+      overflow:hidden;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    /* Exact canvas size for your wall; device/player will scale as needed */
+    #stage{
+      width:800px;
+      height:400px;
+      background:var(--bg);
+      overflow:hidden;
+      position:relative;
+      transform-origin: top left;
+    }
+
+    /* Scale stage to fill viewport while preserving aspect ratio */
+    #stageScaler{
+      width:100vw;
+      height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:var(--bg);
+    }
+
+    img#ad{
+      width:100%;
+      height:100%;
+      object-fit:var(--fit);
+      background:var(--bg);
+      display:block;
+    }
+
+    /* Optional tiny status (hidden by default) */
+    #debug{
+      position:absolute;
+      left:8px; bottom:6px;
+      color:#fff;
+      font-size:12px;
+      opacity:.65;
+      display:none;
+      text-shadow: 0 1px 2px rgba(0,0,0,.8);
+    }
+    body.debug #debug{ display:block; }
+  </style>
+</head>
+<body>
+  <div id="stageScaler">
+    <div id="stage">
+      <img id="ad" alt="Advertisement" />
+      <div id="debug"></div>
+    </div>
+  </div>
+
+<script>
+/**
+ * LED Ad Loop (GitHub folder auto-discovery)
+ * - Put any .png/.jpg/.jpeg/.webp/.gif into /ads (or config.adsFolder)
+ * - No code edits needed when you add/remove images.
+ * - Rotates every 6 seconds.
+ * - Re-reads the folder list every few minutes.
+ *
+ * Works best when hosted on GitHub Pages.
+ */
+
+const elImg = document.getElementById("ad");
+const elDebug = document.getElementById("debug");
+
+const state = {
+  cfg: null,
+  list: [],
+  idx: 0,
+  lastFetch: 0,
+  timer: null
+};
+
+function qsBool(name){
+  const v = new URLSearchParams(location.search).get(name);
+  return v === "1" || v === "true" || v === "yes";
+}
+
+if(qsBool("debug")) document.body.classList.add("debug");
+
+function setDebug(msg){
+  elDebug.textContent = msg || "";
+}
+
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+function inferRepoFromLocation(){
+  // Supports:
+  // 1) https://OWNER.github.io/REPO/...
+  // 2) https://OWNER.github.io/  (repo = OWNER.github.io)
+  const host = location.hostname.toLowerCase();
+  const pathParts = location.pathname.split("/").filter(Boolean);
+
+  if(host.endsWith(".github.io")){
+    const owner = host.split(".github.io")[0];
+    const repo = (pathParts.length >= 1) ? pathParts[0] : host; // user site vs project site
+    const basePath = (pathParts.length >= 1) ? `/${pathParts[0]}/` : "/";
+    return { owner, repo, basePath };
+  }
+  return null;
+}
+
+function normalizeExt(name){
+  const m = name.toLowerCase().match(/\.(png|jpg|jpeg|webp|gif)$/);
+  return m ? m[1] : null;
+}
+
+async function loadConfig(){
+  // Cache-bust config fetch so changes apply quickly
+  const url = `config.json?v=${Date.now()}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if(!res.ok) throw new Error("config.json not found");
+  const cfg = await res.json();
+
+  // Apply config to CSS variables
+  document.documentElement.style.setProperty("--bg", cfg.bg || "#000");
+  document.documentElement.style.setProperty("--fit", cfg.fit || "contain");
+  return cfg;
+}
+
+async function fetchAdListViaGitHubAPI(cfg){
+  const inferred = inferRepoFromLocation();
+  if(!inferred) throw new Error("Not hosted on GitHub Pages (can't infer repo).");
+
+  const folder = (cfg.adsFolder || "ads").replace(/^\/+|\/+$/g,"");
+  const api = `https://api.github.com/repos/${inferred.owner}/${inferred.repo}/contents/${folder}?ref=main`;
+
+  const res = await fetch(api, { cache: "no-store" });
+  if(!res.ok){
+    // Some repos use master; try that
+    const res2 = await fetch(api.replace("ref=main","ref=master"), { cache:"no-store" });
+    if(!res2.ok) throw new Error(`GitHub API failed (${res.status})`);
+    return parseGitHubContents(await res2.json());
+  }
+  return parseGitHubContents(await res.json());
+}
+
+function parseGitHubContents(json){
+  if(!Array.isArray(json)) return [];
+  const files = json
+    .filter(x => x && x.type === "file" && normalizeExt(x.name))
+    .map(x => x.download_url)  // raw, CDN friendly
+    .filter(Boolean);
+  return files;
+}
+
+function shuffle(arr){
+  // Fisher–Yates
+  const a = arr.slice();
+  for(let i=a.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function buildFallbackList(cfg){
+  const base = inferRepoFromLocation()?.basePath || "./";
+  const fallback = (cfg.fallbackImages && cfg.fallbackImages.length)
+    ? cfg.fallbackImages
+    : ["ad.png"];
+  // use relative paths so it works without GitHub API too
+  return fallback.map(p => base + p.replace(/^\/+/,""));
+}
+
+function setImage(url){
+  // Bust cache so new uploads show immediately.
+  // (Appends ?v=timestamp unless already has a query)
+  const u = new URL(url, location.href);
+  u.searchParams.set("v", Date.now());
+  elImg.src = u.toString();
+}
+
+function next(){
+  if(!state.list.length) return;
+  state.idx = (state.idx + 1) % state.list.length;
+  setImage(state.list[state.idx]);
+  setDebug(`${state.idx+1}/${state.list.length} • ${new Date().toLocaleTimeString()}`);
+}
+
+async function refreshListIfNeeded(force=false){
+  const now = Date.now();
+  if(!force && (now - state.lastFetch) < state.cfg.pollIntervalMs) return;
+
+  try{
+    let list = await fetchAdListViaGitHubAPI(state.cfg);
+    if(list.length){
+      // Shuffle so it doesn't feel repetitive; keep current image if possible
+      list = shuffle(list);
+      state.list = list;
+      state.idx = 0;
+      setImage(state.list[state.idx]);
+      state.lastFetch = now;
+      setDebug(`Loaded ${state.list.length} ads • ${new Date().toLocaleTimeString()}`);
+      return;
+    }
+    throw new Error("Folder empty");
+  }catch(err){
+    // Fallback to local images (works even if GitHub API rate limits)
+    state.list = buildFallbackList(state.cfg);
+    state.idx = 0;
+    setImage(state.list[state.idx]);
+    state.lastFetch = now;
+    setDebug(`Fallback list (${state.list.length}) • ${new Date().toLocaleTimeString()}`);
+  }
+}
+
+async function main(){
+  state.cfg = await loadConfig();
+
+  // 1) initial list
+  await refreshListIfNeeded(true);
+
+  // 2) rotate
+  clearInterval(state.timer);
+  state.timer = setInterval(next, Math.max(1000, Number(state.cfg.durationMs) || 6000));
+
+  // 3) poll for new images
+  setInterval(() => refreshListIfNeeded(false), Math.max(30000, Number(state.cfg.pollIntervalMs) || 300000));
+
+  // 4) if the page becomes visible again, refresh immediately (TV browser quirks)
+  document.addEventListener("visibilitychange", () => {
+    if(!document.hidden) refreshListIfNeeded(true);
+  });
+}
+
+main().catch(e => {
+  setDebug("Error: " + (e && e.message ? e.message : e));
+});
+</script>
+</body>
+</html>

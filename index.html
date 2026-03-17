@@ -79,8 +79,15 @@
  * LED Ad Loop (GitHub folder auto-discovery)
  * - Put any .png/.jpg/.jpeg/.webp/.gif into /ads (or config.adsFolder)
  * - No code edits needed when you add/remove images.
- * - Rotates every 6 seconds.
- * - Re-reads the folder list every few minutes.
+ * - Rotates every 6 seconds (configurable via config.json durationMs).
+ * - Re-reads the folder list every few minutes (configurable via config.json pollIntervalMs).
+ *
+ * EXPIRY via filename:
+ *   Append __YYYYMMDD before the file extension to set an expiry date.
+ *   Examples:
+ *     sale_banner__20260325.png    <- expires March 25, 2026 (won't show on or after that date)
+ *     grand_opening__20260401.jpg  <- expires April 1, 2026
+ *     evergreen_ad.png             <- no suffix = never expires
  *
  * Works best when hosted on GitHub Pages.
  */
@@ -95,6 +102,8 @@ const state = {
   lastFetch: 0,
   timer: null
 };
+
+/* ── Helpers ─────────────────────────────────────────────── */
 
 function qsBool(name){
   const v = new URLSearchParams(location.search).get(name);
@@ -118,7 +127,7 @@ function inferRepoFromLocation(){
 
   if(host.endsWith(".github.io")){
     const owner = host.split(".github.io")[0];
-    const repo = (pathParts.length >= 1) ? pathParts[0] : host; // user site vs project site
+    const repo = (pathParts.length >= 1) ? pathParts[0] : host;
     const basePath = (pathParts.length >= 1) ? `/${pathParts[0]}/` : "/";
     return { owner, repo, basePath };
   }
@@ -130,18 +139,44 @@ function normalizeExt(name){
   return m ? m[1] : null;
 }
 
+/* ── Expiry check ────────────────────────────────────────── */
+
+/**
+ * Returns true if the file should be shown today.
+ * Filenames with __YYYYMMDD before the extension expire ON that date
+ * (i.e. the last day they are shown is YYYYMMDD - 1).
+ * Files without the suffix never expire.
+ */
+function isNotExpired(filename){
+  const match = filename.match(/__(\d{4})(\d{2})(\d{2})\.[^.]+$/);
+  if(!match) return true; // no expiry date = always show
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const expiry = new Date(
+    parseInt(match[1], 10),
+    parseInt(match[2], 10) - 1,  // month is 0-indexed
+    parseInt(match[3], 10)
+  );
+
+  return expiry > today; // strictly after today means still valid
+}
+
+/* ── Config ──────────────────────────────────────────────── */
+
 async function loadConfig(){
-  // Cache-bust config fetch so changes apply quickly
   const url = `config.json?v=${Date.now()}`;
   const res = await fetch(url, { cache: "no-store" });
   if(!res.ok) throw new Error("config.json not found");
   const cfg = await res.json();
 
-  // Apply config to CSS variables
   document.documentElement.style.setProperty("--bg", cfg.bg || "#000");
   document.documentElement.style.setProperty("--fit", cfg.fit || "contain");
   return cfg;
 }
+
+/* ── GitHub API ──────────────────────────────────────────── */
 
 async function fetchAdListViaGitHubAPI(cfg){
   const inferred = inferRepoFromLocation();
@@ -152,7 +187,6 @@ async function fetchAdListViaGitHubAPI(cfg){
 
   const res = await fetch(api, { cache: "no-store" });
   if(!res.ok){
-    // Some repos use master; try that
     const res2 = await fetch(api.replace("ref=main","ref=master"), { cache:"no-store" });
     if(!res2.ok) throw new Error(`GitHub API failed (${res.status})`);
     return parseGitHubContents(await res2.json());
@@ -162,18 +196,26 @@ async function fetchAdListViaGitHubAPI(cfg){
 
 function parseGitHubContents(json){
   if(!Array.isArray(json)) return [];
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   const files = json
     .filter(x => x && x.type === "file" && normalizeExt(x.name))
-    .map(x => x.download_url)  // raw, CDN friendly
+    // ── Expiry filter: skip files whose __YYYYMMDD date is today or past ──
+    .filter(x => isNotExpired(x.name))
+    .map(x => x.download_url)
     .filter(Boolean);
+
   return files;
 }
 
+/* ── Shuffle / fallback ──────────────────────────────────── */
+
 function shuffle(arr){
-  // Fisher–Yates
   const a = arr.slice();
-  for(let i=a.length-1;i>0;i--){
-    const j = Math.floor(Math.random()*(i+1));
+  for(let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
@@ -184,13 +226,12 @@ function buildFallbackList(cfg){
   const fallback = (cfg.fallbackImages && cfg.fallbackImages.length)
     ? cfg.fallbackImages
     : ["ad.png"];
-  // use relative paths so it works without GitHub API too
   return fallback.map(p => base + p.replace(/^\/+/,""));
 }
 
+/* ── Image display ───────────────────────────────────────── */
+
 function setImage(url){
-  // Bust cache so new uploads show immediately.
-  // (Appends ?v=timestamp unless already has a query)
   const u = new URL(url, location.href);
   u.searchParams.set("v", Date.now());
   elImg.src = u.toString();
@@ -200,17 +241,18 @@ function next(){
   if(!state.list.length) return;
   state.idx = (state.idx + 1) % state.list.length;
   setImage(state.list[state.idx]);
-  setDebug(`${state.idx+1}/${state.list.length} • ${new Date().toLocaleTimeString()}`);
+  setDebug(`${state.idx + 1}/${state.list.length} • ${new Date().toLocaleTimeString()}`);
 }
 
-async function refreshListIfNeeded(force=false){
+/* ── Poll / refresh ──────────────────────────────────────── */
+
+async function refreshListIfNeeded(force = false){
   const now = Date.now();
   if(!force && (now - state.lastFetch) < state.cfg.pollIntervalMs) return;
 
   try{
     let list = await fetchAdListViaGitHubAPI(state.cfg);
     if(list.length){
-      // Shuffle so it doesn't feel repetitive; keep current image if possible
       list = shuffle(list);
       state.list = list;
       state.idx = 0;
@@ -219,9 +261,8 @@ async function refreshListIfNeeded(force=false){
       setDebug(`Loaded ${state.list.length} ads • ${new Date().toLocaleTimeString()}`);
       return;
     }
-    throw new Error("Folder empty");
+    throw new Error("Folder empty or all ads expired");
   }catch(err){
-    // Fallback to local images (works even if GitHub API rate limits)
     state.list = buildFallbackList(state.cfg);
     state.idx = 0;
     setImage(state.list[state.idx]);
@@ -230,20 +271,22 @@ async function refreshListIfNeeded(force=false){
   }
 }
 
+/* ── Main ────────────────────────────────────────────────── */
+
 async function main(){
   state.cfg = await loadConfig();
 
   // 1) initial list
   await refreshListIfNeeded(true);
 
-  // 2) rotate
+  // 2) rotate images
   clearInterval(state.timer);
   state.timer = setInterval(next, Math.max(1000, Number(state.cfg.durationMs) || 6000));
 
-  // 3) poll for new images
+  // 3) poll for new/expired images
   setInterval(() => refreshListIfNeeded(false), Math.max(30000, Number(state.cfg.pollIntervalMs) || 300000));
 
-  // 4) if the page becomes visible again, refresh immediately (TV browser quirks)
+  // 4) refresh immediately when tab/screen becomes visible again (TV browser quirks)
   document.addEventListener("visibilitychange", () => {
     if(!document.hidden) refreshListIfNeeded(true);
   });

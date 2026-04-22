@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LED Screen Admin</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --panel: #14171c;
+      --panel-2: #1a1e25;
+      --border: #262b33;
+      --border-2: #333945;
+      --text: #e8eaed;
+      --text-dim: #9aa3b2;
+      --text-faint: #6b7382;
+      --accent: #4f8cff;
+      --accent-2: #3a6fd8;
+      --danger: #ef4444;
+      --danger-2: #b91c1c;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --radius: 12px;
+      --shadow: 0 4px 20px rgba(0,0,0,.35);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 600px at 80% -10%, rgba(79,140,255,.08), transparent 60%),
+        radial-gradient(800px 400px at 0% 110%, rgba(16,185,129,.06), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Top bar ──────────────────────────────────── */
+    .topbar {
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(12px);
+      background: rgba(11,13,16,.75);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 28px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .topbar h1 {
+      font-size: 16px; margin: 0; font-weight: 700; letter-spacing: -.01em;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .logo-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 12px var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+    .topbar .spacer { flex: 1; }
+    .conn {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: var(--text-dim);
+      padding: 6px 12px; border: 1px solid var(--border);
+      border-radius: 999px; cursor: pointer;
+    }
+    .conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+    .conn.connected .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+
+    /* ── Layout ──────────────────────────────────── */
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 28px; }
+    .section-title {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin: 28px 0 14px;
+    }
+    .section-title h2 {
+      font-size: 13px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .08em;
+      color: var(--text-dim); margin: 0;
+    }
+    .section-title .count { color: var(--text-faint); font-size: 13px; }
+
+    /* ── Panels ──────────────────────────────────── */
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+    }
+    .panel.collapsed .panel-body { display: none; }
+    .panel-head {
+      display: flex; align-items: center; gap: 12px;
+      cursor: pointer; user-select: none;
+    }
+    .panel-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+    .panel-head .chev { margin-left: auto; color: var(--text-faint); transition: transform .2s; }
+    .panel.collapsed .chev { transform: rotate(-90deg); }
+    .panel-body { margin-top: 16px; }
+
+    /* ── Forms ──────────────────────────────────── */
+    label {
+      display: block; font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .06em;
+      color: var(--text-dim); margin-bottom: 6px;
+    }
+    input, select, button {
+      font: inherit; color: var(--text);
+      background: var(--panel-2);
+      border: 1px solid var(--border-2);
+      border-radius: 8px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79,140,255,.15);
+    }
+    input[type="file"] { padding: 6px; font-size: 13px; }
+    input[type="file"]::file-selector-button {
+      background: var(--panel); color: var(--text);
+      border: 1px solid var(--border-2); border-radius: 6px;
+      padding: 6px 12px; margin-right: 10px; cursor: pointer; font: inherit;
+    }
+    input[type="file"]::file-selector-button:hover { background: var(--border); }
+    input[type="date"], input[type="number"], input[type="password"], input[type="text"], select { width: 100%; }
+
+    .grid-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+    }
+    .grid-form .span-2 { grid-column: span 2; }
+    .grid-form .span-full { grid-column: 1 / -1; }
+    @media (max-width: 600px) { .grid-form .span-2 { grid-column: 1 / -1; } }
+
+    button.btn {
+      background: var(--accent); color: #fff;
+      border: 1px solid var(--accent);
+      font-weight: 600; cursor: pointer;
+      padding: 10px 18px;
+    }
+    button.btn:hover { background: var(--accent-2); border-color: var(--accent-2); }
+    button.btn:disabled { opacity: .5; cursor: not-allowed; }
+    button.btn.ghost { background: transparent; color: var(--text); border-color: var(--border-2); }
+    button.btn.ghost:hover { background: var(--panel-2); }
+    button.btn.danger { background: var(--danger); border-color: var(--danger); }
+    button.btn.danger:hover { background: var(--danger-2); border-color: var(--danger-2); }
+    button.btn.sm { padding: 6px 12px; font-size: 12px; }
+
+    .status {
+      margin-top: 12px; font-size: 13px; min-height: 18px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--danger); }
+
+    .token-row { display: flex; gap: 10px; align-items: stretch; }
+    .token-row input { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+    .hint { font-size: 12px; color: var(--text-faint); margin-top: 10px; }
+    .hint a { color: var(--accent); text-decoration: none; }
+    .hint a:hover { text-decoration: underline; }
+    code {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+
+    /* ── Ad grid ──────────────────────────────────── */
+    .ads {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .ad {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      transition: transform .15s, border-color .15s, box-shadow .15s;
+    }
+    .ad:hover {
+      transform: translateY(-2px);
+      border-color: var(--border-2);
+      box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    }
+    .ad.disabled { opacity: .55; }
+    .ad-thumb {
+      position: relative;
+      aspect-ratio: 2 / 1;
+      background: #000;
+      overflow: hidden;
+    }
+    .ad-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .ad-badges {
+      position: absolute; top: 10px; left: 10px;
+      display: flex; gap: 6px; flex-wrap: wrap;
+    }
+    .badge {
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .02em;
+      backdrop-filter: blur(6px);
+    }
+    .badge.active   { background: rgba(16,185,129,.85); color: #fff; }
+    .badge.pending  { background: rgba(245,158,11,.85); color: #fff; }
+    .badge.expired  { background: rgba(239,68,68,.85);  color: #fff; }
+    .badge.disabled { background: rgba(107,115,130,.85); color: #fff; }
+    .badge.off-today{ background: rgba(107,115,130,.7); color: #fff; }
+
+    .ad-body {
+      padding: 14px 16px;
+      display: flex; flex-direction: column; gap: 10px;
+      flex: 1;
+    }
+    .ad-name { font-size: 13px; font-weight: 600; word-break: break-all; line-height: 1.35; }
+    .ad-summary {
+      font-size: 12px; color: var(--text-dim);
+      line-height: 1.5;
+    }
+    .ad-summary .k { color: var(--text-faint); }
+    .ad-actions { margin-top: auto; display: flex; gap: 8px; }
+    .ad-actions .spacer { flex: 1; }
+
+    .empty {
+      text-align: center; padding: 60px 20px;
+      color: var(--text-faint); font-size: 14px;
+    }
+
+    details.help {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 18px;
+      margin-top: 18px;
+    }
+    details.help summary {
+      cursor: pointer; font-weight: 600; font-size: 13px;
+      list-style: none; display: flex; align-items: center; gap: 8px;
+    }
+    details.help summary::-webkit-details-marker { display: none; }
+    details.help summary::before {
+      content: "›"; transition: transform .15s;
+      color: var(--text-faint); font-size: 18px; line-height: 1;
+    }
+    details.help[open] summary::before { transform: rotate(90deg); }
+    details.help .help-body {
+      margin-top: 12px; font-size: 13px; line-height: 1.7; color: var(--text-dim);
+    }
+
+    .spin {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid var(--border-2);
+      border-top-color: var(--accent);
+      animation: spin .8s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Modal ──────────────────────────────────── */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.6);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 20px;
+      z-index: 100;
+      overflow-y: auto;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--panel);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      width: 100%; max-width: 540px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.6);
+      animation: slideUp .2s ease-out;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(10px); opacity: 0; }
+      to   { transform: translateY(0); opacity: 1; }
+    }
+    .modal-head {
+      display: flex; align-items: center; gap: 14px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-head img {
+      width: 80px; height: 48px;
+      object-fit: contain;
+      background: #000;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .modal-head .title {
+      flex: 1; min-width: 0;
+      font-weight: 600; font-size: 14px;
+      word-break: break-all;
+    }
+    .modal-head .close {
+      background: transparent; border: none;
+      color: var(--text-faint); font-size: 24px;
+      cursor: pointer; padding: 4px 10px; border-radius: 6px;
+    }
+    .modal-head .close:hover { background: var(--panel-2); color: var(--text); }
+
+    .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+    .modal-foot {
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+      display: flex; gap: 10px; align-items: center;
+    }
+    .modal-foot .spacer { flex: 1; }
+
+    .field-group { display: flex; flex-direction: column; gap: 6px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* toggle */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 14px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .toggle-row .label-main { font-weight: 600; font-size: 14px; }
+    .toggle-row .label-sub { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+    .switch {
+      position: relative; display: inline-block;
+      width: 42px; height: 24px; flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .slider {
+      position: absolute; inset: 0;
+      background: var(--border-2);
+      border-radius: 999px;
+      transition: background .2s;
+      cursor: pointer;
+    }
+    .switch .slider::before {
+      content: "";
+      position: absolute;
+      width: 18px; height: 18px;
+      left: 3px; top: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform .2s;
+    }
+    .switch input:checked + .slider { background: var(--accent); }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+
+    /* days picker */
+    .days {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px;
+    }
+    .days label {
+      display: flex; align-items: center; justify-content: center;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 4px;
+      font-size: 12px; font-weight: 600;
+      text-transform: none; letter-spacing: 0;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+      margin: 0;
+      transition: all .15s;
+    }
+    .days label:hover { border-color: var(--border-2); color: var(--text); }
+    .days input { display: none; }
+    .days input:checked + span { color: #fff; }
+    .days label:has(input:checked) {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .nth-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <h1><span class="logo-dot"></span> LED Screen Admin</h1>
+    <span class="spacer"></span>
+    <span id="connPill" class="conn" title="Click to edit connection">
+      <span class="dot"></span>
+      <span id="connText">Not connected</span>
+    </span>
+  </div>
+
+  <div class="wrap">
+
+    <!-- SETUP -->
+    <div class="panel" id="setupPanel">
+      <div class="panel-head" id="setupHead">
+        <h3>GitHub Connection</h3>
+        <span class="chev">▾</span>
+      </div>
+      <div class="panel-body">
+        <div class="grid-form">
+          <div><label>Owner</label><input id="owner" placeholder="stephenjackson" /></div>
+          <div><label>Repo</label><input id="repo" placeholder="Outdoor-LED-Screen" /></div>
+          <div><label>Branch</label><input id="branch" value="main" /></div>
+          <div class="span-full">
+            <label>Personal Access Token</label>
+            <div class="token-row">
+              <input id="token" type="password" placeholder="ghp_… or github_pat_…" />
+              <button id="saveCfg" class="btn">Save & Connect</button>
+            </div>
+          </div>
+        </div>
+        <div class="hint">
+          Token is stored in this browser only. Needs <code>Contents: Read and write</code> on this repo.
+          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Create a fine-grained PAT →</a>
+        </div>
+        <div id="setupStatus" class="status"></div>
+      </div>
+    </div>
+
+    <!-- UPLOAD -->
+    <div class="section-title"><h2>Upload</h2></div>
+    <div class="panel">
+      <div class="grid-form">
+        <div class="span-2">
+          <label>Image file</label>
+          <input id="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+        </div>
+        <div><label>Start date</label><input id="start" type="date" /></div>
+        <div><label>End date <span style="text-transform:none;color:var(--text-faint)">(exclusive)</span></label><input id="end" type="date" /></div>
+        <div>
+          <label>Duration</label>
+          <select id="duration">
+            <option value="">Default</option>
+            <option value="3">3 sec</option>
+            <option value="5">5 sec</option>
+            <option value="8">8 sec</option>
+            <option value="10">10 sec</option>
+            <option value="15">15 sec</option>
+            <option value="20">20 sec</option>
+            <option value="30">30 sec</option>
+            <option value="60">60 sec</option>
+          </select>
+        </div>
+        <div class="span-full" style="display:flex;gap:10px;align-items:center">
+          <button id="uploadBtn" class="btn">Upload to Playlist</button>
+          <span id="uploadStatus" class="status"></span>
+        </div>
+        <div class="span-full hint">New images show every day by default. Edit schedule & recurrence after uploading.</div>
+      </div>
+    </div>
+
+    <!-- PLAYLIST -->
+    <div class="section-title">
+      <h2>Current Playlist</h2>
+      <span class="count" id="listCount"></span>
+    </div>
+    <div id="list"><div class="empty">Connect your GitHub token above to load the playlist.</div></div>
+
+    <details class="help">
+      <summary>Filename schedule reference</summary>
+      <div class="help-body">
+        <div><code>__sYYYYMMDD</code> — start date (inclusive)</div>
+        <div><code>__eYYYYMMDD</code> — end date (exclusive)</div>
+        <div><code>__dSECONDS</code> — per-image duration override</div>
+        <div><code>__off</code> — disabled; ad stays in folder but never shows</div>
+        <div><code>__wMON,FRI3</code> — weekday rule; e.g. every Mon + 3rd Fri. Letters: MON/TUE/WED/THU/FRI/SAT/SUN. Add 1–5 for Nth week, or L for last week.</div>
+        <div style="margin-top:8px;color:var(--text-faint)">The admin page builds these for you — reference is for manual renames.</div>
+      </div>
+    </details>
+
+  </div>
+
+  <!-- EDIT MODAL -->
+  <div class="modal-overlay" id="editOverlay">
+    <div class="modal">
+      <div class="modal-head">
+        <img id="mThumb" alt="" />
+        <div class="title" id="mTitle"></div>
+        <button class="close" id="mClose">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="toggle-row">
+          <div>
+            <div class="label-main">Enabled</div>
+            <div class="label-sub">Disable to keep the ad in the folder but hide it from the screen.</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="mEnabled" checked /><span class="slider"></span></label>
+        </div>
+
+        <div class="field-row">
+          <div class="field-group">
+            <label>Start date</label>
+            <input id="mStart" type="date" />
+          </div>
+          <div class="field-group">
+            <label>End date (exclusive)</label>
+            <input id="mEnd" type="date" />
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label>Recurrence</label>
+          <select id="mRecurrence">
+            <option value="all">Every day</option>
+            <option value="weekdays">Weekdays (Mon–Fri)</option>
+            <option value="weekends">Weekends (Sat–Sun)</option>
+            <option value="specific">Specific days…</option>
+            <option value="nth">Monthly on Nth weekday…</option>
+          </select>
+        </div>
+
+        <div class="field-group" id="mDaysWrap" style="display:none">
+          <label>Days</label>
+          <div class="days" id="mDays">
+            <label><input type="checkbox" value="MON" /><span>Mon</span></label>
+            <label><input type="checkbox" value="TUE" /><span>Tue</span></label>
+            <label><input type="checkbox" value="WED" /><span>Wed</span></label>
+            <label><input type="checkbox" value="THU" /><span>Thu</span></label>
+            <label><input type="checkbox" value="FRI" /><span>Fri</span></label>
+            <label><input type="checkbox" value="SAT" /><span>Sat</span></label>
+            <label><input type="checkbox" value="SUN" /><span>Sun</span></label>
+          </div>
+        </div>
+
+        <div class="field-group" id="mNthWrap" style="display:none">
+          <label>Which occurrence</label>
+          <div class="nth-row">
+            <select id="mNthWhich">
+              <option value="1">1st</option>
+              <option value="2">2nd</option>
+              <option value="3">3rd</option>
+              <option value="4">4th</option>
+              <option value="L">Last</option>
+            </select>
+            <select id="mNthDay">
+              <option value="MON">Monday</option>
+              <option value="TUE">Tuesday</option>
+              <option value="WED">Wednesday</option>
+              <option value="THU">Thursday</option>
+              <option value="FRI">Friday</option>
+              <option value="SAT">Saturday</option>
+              <option value="SUN">Sunday</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label>Duration per rotation</label>
+          <select id="mDuration">
+            <option value="">Default (from config)</option>
+            <option value="3">3 sec</option>
+            <option value="5">5 sec</option>
+            <option value="8">8 sec</option>
+            <option value="10">10 sec</option>
+            <option value="15">15 sec</option>
+            <option value="20">20 sec</option>
+            <option value="30">30 sec</option>
+            <option value="60">60 sec</option>
+          </select>
+        </div>
+
+        <div id="mStatus" class="status"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="mDelete" class="btn danger">Delete</button>
+        <span class="spacer"></span>
+        <button id="mCancel" class="btn ghost">Cancel</button>
+        <button id="mSave" class="btn">Save changes</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const LS_KEY = "led-admin-cfg";
+const ADS_FOLDER = "ads";
+
+const $ = (id) => document.getElementById(id);
+const elOwner = $("owner"), elRepo = $("repo"), elBranch = $("branch"), elToken = $("token");
+const elSetupStatus = $("setupStatus"), elUploadStatus = $("uploadStatus");
+const elList = $("list"), elListCount = $("listCount");
+const elSetupPanel = $("setupPanel"), elConnPill = $("connPill"), elConnText = $("connText");
+
+/* ── config persistence ─────────────────────────────── */
+function loadCfg(){ try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch { return {}; } }
+function saveCfg(cfg){ localStorage.setItem(LS_KEY, JSON.stringify(cfg)); }
+function inferOwnerRepo(){
+  const host = location.hostname.toLowerCase();
+  const parts = location.pathname.split("/").filter(Boolean);
+  if(host.endsWith(".github.io")) return { owner: host.split(".github.io")[0], repo: parts[0] || host };
+  return null;
+}
+function initSetup(){
+  const saved = loadCfg();
+  const inferred = inferOwnerRepo() || {};
+  elOwner.value  = saved.owner  || inferred.owner || "";
+  elRepo.value   = saved.repo   || inferred.repo  || "";
+  elBranch.value = saved.branch || "main";
+  elToken.value  = saved.token  || "";
+  updateConnPill(!!saved.token);
+  if(saved.token) elSetupPanel.classList.add("collapsed");
+}
+function updateConnPill(connected){
+  elConnPill.classList.toggle("connected", connected);
+  const cfg = loadCfg();
+  elConnText.textContent = connected ? `${cfg.owner}/${cfg.repo}` : "Not connected";
+}
+
+$("setupHead").addEventListener("click", () => elSetupPanel.classList.toggle("collapsed"));
+elConnPill.addEventListener("click", () => elSetupPanel.classList.remove("collapsed"));
+
+$("saveCfg").addEventListener("click", async () => {
+  const cfg = {
+    owner: elOwner.value.trim(), repo: elRepo.value.trim(),
+    branch: elBranch.value.trim() || "main", token: elToken.value.trim()
+  };
+  if(!cfg.owner || !cfg.repo || !cfg.token){
+    setStatus(elSetupStatus, "err", "Owner, repo, and token are all required."); return;
+  }
+  saveCfg(cfg);
+  setStatus(elSetupStatus, "ok", "Checking access…");
+  try {
+    await apiFetch(`/repos/${cfg.owner}/${cfg.repo}`);
+    setStatus(elSetupStatus, "ok", "✓ Connected.");
+    updateConnPill(true);
+    elSetupPanel.classList.add("collapsed");
+    refreshList();
+  } catch(err){
+    setStatus(elSetupStatus, "err", "Access failed: " + err.message);
+    updateConnPill(false);
+  }
+});
+
+/* ── GitHub API ──────────────────────────────────── */
+async function apiFetch(path, opts = {}){
+  const cfg = loadCfg();
+  const headers = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    ...(opts.headers || {})
+  };
+  if(cfg.token) headers["Authorization"] = `Bearer ${cfg.token}`;
+  const res = await fetch(`https://api.github.com${path}`, { ...opts, headers });
+  if(!res.ok){
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/* ── filename schedule ───────────────────────────── */
+const EXT_RE = /\.(png|jpg|jpeg|webp|gif)$/i;
+const DOW_CODES = { SUN:0, MON:1, TUE:2, WED:3, THU:4, FRI:5, SAT:6 };
+const DOW_LABELS = { MON:"Mon", TUE:"Tue", WED:"Wed", THU:"Thu", FRI:"Fri", SAT:"Sat", SUN:"Sun" };
+
+function sanitizeStem(stem){
+  return stem
+    .replace(/\.[^.]+$/,"")
+    .replace(/__off/gi,"")
+    .replace(/__w[A-Z0-9,L]+/gi,"")
+    .replace(/__[sed]\d+/gi,"")
+    .replace(/__\d{8}$/,"")
+    .replace(/[^\w\-]+/g,"_")
+    .replace(/_+/g,"_")
+    .replace(/^_+|_+$/g,"")
+    || "image";
+}
+
+function buildFilename(originalName, { startISO, endISO, durationSec, disabled, weekdayRule } = {}){
+  const ext = (originalName.match(EXT_RE) || [".png"])[0].toLowerCase();
+  const stem = sanitizeStem(originalName.replace(EXT_RE,""));
+  let suffix = "";
+  if(startISO)     suffix += `__s${startISO.replaceAll("-","")}`;
+  if(endISO)       suffix += `__e${endISO.replaceAll("-","")}`;
+  if(weekdayRule)  suffix += `__w${weekdayRule}`;
+  if(durationSec)  suffix += `__d${parseInt(durationSec,10)}`;
+  if(disabled)     suffix += `__off`;
+  return stem + suffix + ext;
+}
+
+function parseSchedule(filename){
+  const base = filename.replace(/\.[^.]+$/,"");
+  const out = { start: null, end: null, durationSec: null, disabled: false, weekday: null };
+  const mk = (y,m,d) => { const dt = new Date(+y, +m-1, +d); dt.setHours(0,0,0,0); return dt; };
+  let m;
+  if((m = base.match(/__s(\d{4})(\d{2})(\d{2})(?:__|$)/))) out.start = mk(m[1],m[2],m[3]);
+  if((m = base.match(/__e(\d{4})(\d{2})(\d{2})(?:__|$)/))) out.end   = mk(m[1],m[2],m[3]);
+  if((m = base.match(/__d(\d+)(?:__|$)/)))                 out.durationSec = +m[1];
+  if(/__off(?:__|$)/.test(base))                           out.disabled = true;
+  if((m = base.match(/__w([A-Z0-9,L]+)(?:__|$)/)))         out.weekday = m[1];
+  if(!out.start && !out.end && !out.durationSec && !out.disabled && !out.weekday){
+    const legacy = base.match(/__(\d{4})(\d{2})(\d{2})$/);
+    if(legacy) out.end = mk(legacy[1],legacy[2],legacy[3]);
+  }
+  return out;
+}
+
+function nthWeekdayOfMonth(d){ return Math.ceil(d.getDate() / 7); }
+function isLastWeekdayOfMonth(d){ const n = new Date(d); n.setDate(d.getDate()+7); return n.getMonth() !== d.getMonth(); }
+function matchesWeekdayRule(rule, today){
+  if(!rule) return true;
+  const dow = today.getDay(), nth = nthWeekdayOfMonth(today), last = isLastWeekdayOfMonth(today);
+  for(const raw of rule.split(",")){
+    const m = raw.match(/^([A-Z]{3})(\d|L)?$/);
+    if(!m) continue;
+    const d = DOW_CODES[m[1]];
+    if(d == null || d !== dow) continue;
+    const mod = m[2];
+    if(!mod) return true;
+    if(mod === "L"){ if(last) return true; }
+    else { if(+mod === nth) return true; }
+  }
+  return false;
+}
+
+function scheduleStatus(s){
+  if(s.disabled) return { kind:"disabled", label:"Disabled" };
+  const today = new Date(); today.setHours(0,0,0,0);
+  if(s.start && today < s.start) return { kind:"pending", label:"Scheduled" };
+  if(s.end && today >= s.end)    return { kind:"expired", label:"Expired" };
+  if(!matchesWeekdayRule(s.weekday, today)) return { kind:"off-today", label:"Off today" };
+  return { kind:"active", label:"Active" };
+}
+
+function fmtDate(d){ return d ? d.toISOString().slice(0,10) : "—"; }
+
+function weekdayRuleToText(rule){
+  if(!rule) return "Every day";
+  const tokens = rule.split(",");
+  const allAlways = tokens.every(t => /^[A-Z]{3}$/.test(t));
+  if(allAlways){
+    const days = tokens.map(t => DOW_LABELS[t]).filter(Boolean);
+    if(days.length === 5 && !days.includes("Sat") && !days.includes("Sun")) return "Weekdays";
+    if(days.length === 2 && days.includes("Sat") && days.includes("Sun")) return "Weekends";
+    return days.join(", ");
+  }
+  // nth-style (single token most common)
+  return tokens.map(t => {
+    const m = t.match(/^([A-Z]{3})(\d|L)?$/);
+    if(!m) return t;
+    const day = DOW_LABELS[m[1]] || m[1];
+    if(!m[2]) return day;
+    const which = m[2] === "L" ? "Last" : ["","1st","2nd","3rd","4th","5th"][+m[2]];
+    return `${which} ${day}`;
+  }).join(", ");
+}
+
+function prettyName(filename){
+  return filename
+    .replace(EXT_RE, "")
+    .replace(/__off/gi,"")
+    .replace(/__w[A-Z0-9,L]+/gi,"")
+    .replace(/__[sed]\d+/gi, "")
+    .replace(/__\d{8}$/, "")
+    .replace(/_/g, " ")
+    .trim() || filename;
+}
+
+/* ── upload ──────────────────────────────────── */
+function fileToBase64(file){
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = () => rej(new Error("File read failed"));
+    r.readAsDataURL(file);
+  });
+}
+
+$("uploadBtn").addEventListener("click", async () => {
+  const cfg = loadCfg();
+  if(!cfg.token){ setStatus(elUploadStatus, "err", "Save a GitHub token first."); return; }
+  const file = $("file").files[0];
+  if(!file){ setStatus(elUploadStatus, "err", "Pick a file first."); return; }
+  if(!EXT_RE.test(file.name)){ setStatus(elUploadStatus, "err", "PNG/JPG/WEBP/GIF only."); return; }
+
+  const start = $("start").value, end = $("end").value, dur = $("duration").value;
+  if(start && end && end <= start){ setStatus(elUploadStatus, "err", "End must be after start."); return; }
+
+  const filename = buildFilename(file.name, {
+    startISO: start, endISO: end, durationSec: dur
+  });
+  const path = `${ADS_FOLDER}/${filename}`;
+  setStatus(elUploadStatus, "ok", `<span class="spin"></span> Uploading ${filename}…`);
+  try {
+    const content = await fileToBase64(file);
+    await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${path}`, {
+      method: "PUT",
+      body: JSON.stringify({ message: `admin: add ${filename}`, content, branch: cfg.branch })
+    });
+    setStatus(elUploadStatus, "ok", `✓ Uploaded ${filename}`);
+    $("file").value = ""; $("start").value = ""; $("end").value = ""; $("duration").value = "";
+    refreshList();
+  } catch(err){
+    setStatus(elUploadStatus, "err", "Upload failed: " + err.message);
+  }
+});
+
+/* ── list ──────────────────────────────────── */
+async function refreshList(){
+  const cfg = loadCfg();
+  if(!cfg.owner || !cfg.repo || !cfg.token){
+    elList.innerHTML = '<div class="empty">Connect your GitHub token above to load the playlist.</div>';
+    return;
+  }
+  elList.innerHTML = '<div class="empty"><span class="spin"></span> Loading…</div>';
+  try {
+    const items = await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${ADS_FOLDER}?ref=${encodeURIComponent(cfg.branch||"main")}`);
+    const files = (Array.isArray(items) ? items : []).filter(x => x.type === "file" && EXT_RE.test(x.name));
+    elListCount.textContent = files.length ? `${files.length} image${files.length===1?"":"s"}` : "";
+    if(!files.length){ elList.innerHTML = '<div class="empty">No images yet. Upload one above.</div>'; return; }
+    files.sort((a,b) => a.name.localeCompare(b.name));
+
+    const grid = document.createElement("div");
+    grid.className = "ads";
+    for(const f of files){
+      const s = parseSchedule(f.name);
+      const st = scheduleStatus(s);
+      const card = document.createElement("div");
+      card.className = "ad" + (s.disabled ? " disabled" : "");
+      card.innerHTML = `
+        <div class="ad-thumb">
+          <img src="${f.download_url}" alt="" loading="lazy" />
+          <div class="ad-badges"><span class="badge ${st.kind}">${st.label}</span></div>
+        </div>
+        <div class="ad-body">
+          <div class="ad-name" title="${f.name}">${prettyName(f.name)}</div>
+          <div class="ad-summary">
+            <div><span class="k">When:</span> ${weekdayRuleToText(s.weekday)}</div>
+            <div><span class="k">Dates:</span> ${fmtDate(s.start)} → ${fmtDate(s.end)}</div>
+            <div><span class="k">Duration:</span> ${s.durationSec ? s.durationSec + "s" : "default"}</div>
+          </div>
+          <div class="ad-actions">
+            <button class="btn sm edit-btn">Edit</button>
+            <span class="spacer"></span>
+            <a class="btn ghost sm" href="${f.download_url}" target="_blank" rel="noopener">View</a>
+          </div>
+        </div>
+      `;
+      card.querySelector(".edit-btn").addEventListener("click", () => openEditor(f));
+      grid.appendChild(card);
+    }
+    elList.innerHTML = "";
+    elList.appendChild(grid);
+  } catch(err){
+    elList.innerHTML = `<div class="empty" style="color:var(--danger)">${err.message}</div>`;
+  }
+}
+
+/* ── editor modal ────────────────────────────── */
+let editing = null; // { file, schedule }
+
+function openEditor(file){
+  editing = { file };
+  const s = parseSchedule(file.name);
+  $("mThumb").src = file.download_url;
+  $("mTitle").textContent = prettyName(file.name);
+  $("mEnabled").checked = !s.disabled;
+  $("mStart").value = s.start ? s.start.toISOString().slice(0,10) : "";
+  $("mEnd").value   = s.end   ? s.end.toISOString().slice(0,10)   : "";
+  $("mDuration").value = s.durationSec || "";
+
+  // Recurrence derivation
+  const rec = classifyRecurrence(s.weekday);
+  $("mRecurrence").value = rec.kind;
+  // reset checkboxes
+  $("mDays").querySelectorAll("input").forEach(cb => cb.checked = rec.days.includes(cb.value));
+  $("mNthWhich").value = rec.nthWhich || "3";
+  $("mNthDay").value   = rec.nthDay   || "FRI";
+  updateRecurrenceUI();
+
+  setStatus($("mStatus"), "", "");
+  $("editOverlay").classList.add("open");
+}
+
+function classifyRecurrence(rule){
+  if(!rule) return { kind: "all", days: [] };
+  const tokens = rule.split(",");
+  const allAlways = tokens.every(t => /^[A-Z]{3}$/.test(t));
+  if(allAlways){
+    const set = new Set(tokens);
+    const isWeekdays = set.size === 5 && ["MON","TUE","WED","THU","FRI"].every(d => set.has(d));
+    const isWeekends = set.size === 2 && set.has("SAT") && set.has("SUN");
+    if(isWeekdays) return { kind: "weekdays", days: [] };
+    if(isWeekends) return { kind: "weekends", days: [] };
+    return { kind: "specific", days: tokens };
+  }
+  // nth: take first token
+  const m = tokens[0].match(/^([A-Z]{3})(\d|L)?$/);
+  if(m) return { kind: "nth", days: [], nthDay: m[1], nthWhich: m[2] || "" };
+  return { kind: "all", days: [] };
+}
+
+function collectRecurrenceRule(){
+  const kind = $("mRecurrence").value;
+  if(kind === "all") return "";
+  if(kind === "weekdays") return "MON,TUE,WED,THU,FRI";
+  if(kind === "weekends") return "SAT,SUN";
+  if(kind === "specific"){
+    const days = Array.from($("mDays").querySelectorAll("input:checked")).map(i => i.value);
+    return days.join(",");
+  }
+  if(kind === "nth"){
+    const which = $("mNthWhich").value;
+    const day = $("mNthDay").value;
+    return `${day}${which}`;
+  }
+  return "";
+}
+
+function updateRecurrenceUI(){
+  const kind = $("mRecurrence").value;
+  $("mDaysWrap").style.display = (kind === "specific") ? "flex" : "none";
+  $("mNthWrap").style.display  = (kind === "nth")      ? "flex" : "none";
+}
+
+$("mRecurrence").addEventListener("change", updateRecurrenceUI);
+$("mClose").addEventListener("click", closeEditor);
+$("mCancel").addEventListener("click", closeEditor);
+$("editOverlay").addEventListener("click", (e) => { if(e.target === $("editOverlay")) closeEditor(); });
+document.addEventListener("keydown", (e) => { if(e.key === "Escape") closeEditor(); });
+
+function closeEditor(){ $("editOverlay").classList.remove("open"); editing = null; }
+
+$("mSave").addEventListener("click", async () => {
+  if(!editing) return;
+  const f = editing.file;
+  const start = $("mStart").value, end = $("mEnd").value;
+  if(start && end && end <= start){
+    setStatus($("mStatus"), "err", "End date must be after start date."); return;
+  }
+  const rule = collectRecurrenceRule();
+  if($("mRecurrence").value === "specific" && !rule){
+    setStatus($("mStatus"), "err", "Pick at least one day, or change recurrence."); return;
+  }
+
+  const newName = buildFilename(f.name, {
+    startISO: start,
+    endISO: end,
+    durationSec: $("mDuration").value,
+    disabled: !$("mEnabled").checked,
+    weekdayRule: rule
+  });
+
+  if(newName === f.name){ closeEditor(); return; }
+
+  setStatus($("mStatus"), "ok", `<span class="spin"></span> Saving…`);
+  try {
+    await renameFile(f, newName);
+    closeEditor();
+    refreshList();
+  } catch(err){
+    setStatus($("mStatus"), "err", "Save failed: " + err.message);
+  }
+});
+
+$("mDelete").addEventListener("click", async () => {
+  if(!editing) return;
+  const f = editing.file;
+  if(!confirm(`Delete ${f.name}?`)) return;
+  try {
+    const cfg = loadCfg();
+    await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${ADS_FOLDER}/${f.name}`, {
+      method: "DELETE",
+      body: JSON.stringify({ message: `admin: delete ${f.name}`, sha: f.sha, branch: cfg.branch })
+    });
+    closeEditor();
+    refreshList();
+  } catch(err){
+    setStatus($("mStatus"), "err", "Delete failed: " + err.message);
+  }
+});
+
+/* Rename = fetch content → PUT new name → DELETE old */
+async function renameFile(oldFile, newName){
+  const cfg = loadCfg();
+  const oldPath = `${ADS_FOLDER}/${oldFile.name}`;
+  const newPath = `${ADS_FOLDER}/${newName}`;
+  // fetch content (base64)
+  const detail = await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}?ref=${encodeURIComponent(cfg.branch||"main")}`);
+  const content = (detail.content || "").replace(/\n/g, "");
+  // put new
+  await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${newPath}`, {
+    method: "PUT",
+    body: JSON.stringify({ message: `admin: rename → ${newName}`, content, branch: cfg.branch })
+  });
+  // delete old
+  await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}`, {
+    method: "DELETE",
+    body: JSON.stringify({ message: `admin: remove old ${oldFile.name}`, sha: oldFile.sha, branch: cfg.branch })
+  });
+}
+
+/* ── misc ────────────────────────────────────── */
+function setStatus(el, kind, html){
+  el.className = "status " + kind;
+  el.innerHTML = html;
+}
+
+initSetup();
+if(loadCfg().token) refreshList();
+</script>
+</body>
+</html>

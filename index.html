@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Aggressive no-cache for TV/players -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+
+  <title>LED Ad Loop</title>
+
+  <style>
+    :root{
+      --bg:#000;
+      --fit:contain;
+    }
+    html, body{
+      margin:0;
+      padding:0;
+      width:100%;
+      height:100%;
+      background:var(--bg);
+      overflow:hidden;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    /* Exact canvas size for your wall; device/player will scale as needed */
+    #stage{
+      width:800px;
+      height:400px;
+      background:var(--bg);
+      overflow:hidden;
+      position:relative;
+      transform-origin: top left;
+    }
+
+    /* Scale stage to fill viewport while preserving aspect ratio */
+    #stageScaler{
+      width:100vw;
+      height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:var(--bg);
+    }
+
+    img#ad, iframe#adFrame{
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      background:var(--bg);
+      display:block;
+      border:0;
+    }
+    img#ad{ object-fit:var(--fit); }
+    img#ad.hidden, iframe#adFrame.hidden{ display:none; }
+
+    /* Optional tiny status (hidden by default) */
+    #debug{
+      position:absolute;
+      left:8px; bottom:6px;
+      color:#fff;
+      font-size:12px;
+      opacity:.65;
+      display:none;
+      text-shadow: 0 1px 2px rgba(0,0,0,.8);
+    }
+    body.debug #debug{ display:block; }
+  </style>
+</head>
+<body>
+  <div id="stageScaler">
+    <div id="stage">
+      <img id="ad" alt="Advertisement" />
+      <iframe id="adFrame" class="hidden" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="no-referrer"></iframe>
+      <div id="debug"></div>
+    </div>
+  </div>
+
+<script>
+/**
+ * LED Ad Loop (GitHub folder auto-discovery)
+ * - Put any .png/.jpg/.jpeg/.webp/.gif into /ads (or config.adsFolder)
+ * - No code edits needed when you add/remove images.
+ * - Default rotation duration from config.json durationMs (can be overridden per image).
+ * - Re-reads the folder list every few minutes (configurable via config.json pollIntervalMs).
+ *
+ * SCHEDULE via filename (all markers optional, any order):
+ *   __sYYYYMMDD   start date (inclusive) — image won't show before this date
+ *   __eYYYYMMDD   end date (exclusive)   — image won't show on or after this date
+ *   __dSECONDS    per-image duration in seconds (overrides config durationMs)
+ *   __off         disabled — never shown (useful to keep an ad without removing it)
+ *   __wRULE       weekday recurrence; see below (no __w = every day)
+ *   __YYYYMMDD    legacy: same as __eYYYYMMDD (for backwards compatibility)
+ *
+ *   Weekday rule (__w) tokens, comma-separated:
+ *     MON, TUE, WED, THU, FRI, SAT, SUN    shown every matching weekday
+ *     FRI3                                  shown only on the 3rd Friday of the month
+ *     MONL                                  shown only on the last Monday of the month
+ *     MON,WED,FRI                           any Mon/Wed/Fri
+ *     MON1,MON3                             1st and 3rd Monday of the month
+ *
+ *   Examples:
+ *     sale__s20260401__e20260501__d10.jpg   shown Apr 1–30, 2026, for 10s each rotation
+ *     wing_wed__wWED.jpg                    shown every Wednesday
+ *     third_fri__wFRI3__d15.jpg             shown 15s each on the 3rd Friday of every month
+ *     disabled__off.jpg                     kept in folder but never shown
+ *     evergreen_ad.png                      always shown, default duration
+ *
+ * Works best when hosted on GitHub Pages.
+ */
+
+const elImg = document.getElementById("ad");
+const elFrame = document.getElementById("adFrame");
+const elDebug = document.getElementById("debug");
+
+const state = {
+  cfg: null,
+  list: [],
+  idx: 0,
+  lastFetch: 0,
+  timer: null
+};
+
+/* ── Helpers ─────────────────────────────────────────────── */
+
+function qsBool(name){
+  const v = new URLSearchParams(location.search).get(name);
+  return v === "1" || v === "true" || v === "yes";
+}
+
+if(qsBool("debug")) document.body.classList.add("debug");
+
+function setDebug(msg){
+  elDebug.textContent = msg || "";
+}
+
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+function inferRepoFromLocation(){
+  // Supports:
+  // 1) https://OWNER.github.io/REPO/...
+  // 2) https://OWNER.github.io/  (repo = OWNER.github.io)
+  const host = location.hostname.toLowerCase();
+  const pathParts = location.pathname.split("/").filter(Boolean);
+
+  if(host.endsWith(".github.io")){
+    const owner = host.split(".github.io")[0];
+    const repo = (pathParts.length >= 1) ? pathParts[0] : host;
+    const basePath = (pathParts.length >= 1) ? `/${pathParts[0]}/` : "/";
+    return { owner, repo, basePath };
+  }
+  return null;
+}
+
+function normalizeExt(name){
+  const m = name.toLowerCase().match(/\.(png|jpg|jpeg|webp|gif|url)$/);
+  return m ? m[1] : null;
+}
+function isUrlFile(name){ return /\.url$/i.test(name); }
+
+/* ── Schedule parsing ────────────────────────────────────── */
+
+const DOW_CODES = { SUN:0, MON:1, TUE:2, WED:3, THU:4, FRI:5, SAT:6 };
+
+/**
+ * Extracts schedule info from a filename.
+ * Returns { start, end, durationMs, disabled, weekday }.
+ */
+function parseSchedule(filename){
+  const base = filename.replace(/\.[^.]+$/,"");
+  const out = { start: null, end: null, durationMs: null, disabled: false, weekday: null };
+
+  const mkDate = (y,m,d) => {
+    const dt = new Date(parseInt(y,10), parseInt(m,10)-1, parseInt(d,10));
+    dt.setHours(0,0,0,0);
+    return dt;
+  };
+
+  let m;
+  if((m = base.match(/__s(\d{4})(\d{2})(\d{2})(?:__|$)/))) out.start = mkDate(m[1],m[2],m[3]);
+  if((m = base.match(/__e(\d{4})(\d{2})(\d{2})(?:__|$)/))) out.end   = mkDate(m[1],m[2],m[3]);
+  if((m = base.match(/__d(\d+)(?:__|$)/)))                 out.durationMs = parseInt(m[1],10) * 1000;
+  if(/__off(?:__|$)/.test(base))                           out.disabled = true;
+  if((m = base.match(/__w([A-Z0-9,L]+)(?:__|$)/)))         out.weekday = m[1];
+
+  if(!out.start && !out.end && !out.durationMs && !out.disabled && !out.weekday){
+    const legacy = base.match(/__(\d{4})(\d{2})(\d{2})$/);
+    if(legacy) out.end = mkDate(legacy[1], legacy[2], legacy[3]);
+  }
+  return out;
+}
+
+function nthWeekdayOfMonth(date){
+  return Math.ceil(date.getDate() / 7);
+}
+function isLastWeekdayOfMonth(date){
+  const next = new Date(date); next.setDate(date.getDate() + 7);
+  return next.getMonth() !== date.getMonth();
+}
+
+function matchesWeekdayRule(rule, today){
+  if(!rule) return true;
+  const todayDow = today.getDay();
+  const todayNth = nthWeekdayOfMonth(today);
+  const todayIsLast = isLastWeekdayOfMonth(today);
+  for(const raw of rule.split(",")){
+    const m = raw.match(/^([A-Z]{3})(\d|L)?$/);
+    if(!m) continue;
+    const dow = DOW_CODES[m[1]];
+    if(dow == null || dow !== todayDow) continue;
+    const mod = m[2];
+    if(!mod) return true;
+    if(mod === "L"){ if(todayIsLast) return true; }
+    else           { if(parseInt(mod,10) === todayNth) return true; }
+  }
+  return false;
+}
+
+function isActiveToday(filename){
+  const s = parseSchedule(filename);
+  if(s.disabled) return false;
+  const today = new Date(); today.setHours(0,0,0,0);
+  if(s.start && today < s.start) return false;
+  if(s.end && today >= s.end)    return false;
+  if(!matchesWeekdayRule(s.weekday, today)) return false;
+  return true;
+}
+
+/* ── Config ──────────────────────────────────────────────── */
+
+async function loadConfig(){
+  const url = `config.json?v=${Date.now()}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if(!res.ok) throw new Error("config.json not found");
+  const cfg = await res.json();
+
+  document.documentElement.style.setProperty("--bg", cfg.bg || "#000");
+  document.documentElement.style.setProperty("--fit", cfg.fit || "contain");
+  return cfg;
+}
+
+/* ── GitHub API ──────────────────────────────────────────── */
+
+async function fetchAdListViaGitHubAPI(cfg){
+  const inferred = inferRepoFromLocation();
+  if(!inferred) throw new Error("Not hosted on GitHub Pages (can't infer repo).");
+
+  const folder = (cfg.adsFolder || "ads").replace(/^\/+|\/+$/g,"");
+  const api = `https://api.github.com/repos/${inferred.owner}/${inferred.repo}/contents/${folder}?ref=main`;
+
+  const res = await fetch(api, { cache: "no-store" });
+  if(!res.ok){
+    const res2 = await fetch(api.replace("ref=main","ref=master"), { cache:"no-store" });
+    if(!res2.ok) throw new Error(`GitHub API failed (${res.status})`);
+    return parseGitHubContents(await res2.json());
+  }
+  return parseGitHubContents(await res.json());
+}
+
+function parseGitHubContents(json){
+  if(!Array.isArray(json)) return [];
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const files = json
+    .filter(x => x && x.type === "file" && normalizeExt(x.name))
+    // ── Schedule filter: skip files outside their active window ──
+    .filter(x => isActiveToday(x.name))
+    .map(x => ({
+      url: x.download_url,
+      name: x.name,
+      type: isUrlFile(x.name) ? "url" : "image"
+    }))
+    .filter(x => x.url);
+
+  return files;
+}
+
+async function resolveUrlTargets(list){
+  // For any .url entries, fetch the file contents (the target URL) in parallel.
+  await Promise.all(list.map(async (item) => {
+    if(item.type !== "url" || item.target) return;
+    try {
+      const r = await fetch(item.url, { cache: "no-store" });
+      const text = (await r.text()).trim().split(/\r?\n/)[0].trim();
+      if(/^https?:\/\//i.test(text)) item.target = text;
+    } catch {}
+  }));
+}
+
+/* ── Shuffle / fallback ──────────────────────────────────── */
+
+function shuffle(arr){
+  const a = arr.slice();
+  for(let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function buildFallbackList(cfg){
+  const base = inferRepoFromLocation()?.basePath || "./";
+  const fallback = (cfg.fallbackImages && cfg.fallbackImages.length)
+    ? cfg.fallbackImages
+    : ["ad.png"];
+  return fallback.map(p => ({ url: base + p.replace(/^\/+/,""), name: p, type: "image" }));
+}
+
+/* ── Display ─────────────────────────────────────────────── */
+
+function showImage(url){
+  const u = new URL(url, location.href);
+  u.searchParams.set("v", Date.now());
+  elFrame.classList.add("hidden");
+  elFrame.src = "about:blank";
+  elImg.classList.remove("hidden");
+  elImg.src = u.toString();
+}
+
+function showUrl(target){
+  elImg.classList.add("hidden");
+  elImg.src = "";
+  elFrame.classList.remove("hidden");
+  elFrame.src = target;
+}
+
+function durationForCurrent(){
+  const item = state.list[state.idx];
+  const defaultMs = Math.max(1000, Number(state.cfg.durationMs) || 6000);
+  if(!item || !item.name) return defaultMs;
+  const s = parseSchedule(item.name);
+  return (s.durationMs && s.durationMs >= 1000) ? s.durationMs : defaultMs;
+}
+
+function showCurrent(){
+  const item = state.list[state.idx];
+  if(!item) return;
+  if(item.type === "url" && item.target){
+    showUrl(item.target);
+  } else {
+    showImage(item.url);
+  }
+  setDebug(`${state.idx + 1}/${state.list.length} • ${new Date().toLocaleTimeString()}`);
+}
+
+function scheduleNext(){
+  clearTimeout(state.timer);
+  state.timer = setTimeout(() => {
+    if(!state.list.length) return;
+    state.idx = (state.idx + 1) % state.list.length;
+    showCurrent();
+    scheduleNext();
+  }, durationForCurrent());
+}
+
+/* ── Poll / refresh ──────────────────────────────────────── */
+
+async function refreshListIfNeeded(force = false){
+  const now = Date.now();
+  if(!force && (now - state.lastFetch) < state.cfg.pollIntervalMs) return;
+
+  try{
+    let list = await fetchAdListViaGitHubAPI(state.cfg);
+    await resolveUrlTargets(list);
+    // drop .url entries that didn't resolve to a valid URL
+    list = list.filter(x => x.type !== "url" || x.target);
+    if(list.length){
+      list = shuffle(list);
+      state.list = list;
+      state.idx = 0;
+      showCurrent();
+      scheduleNext();
+      state.lastFetch = now;
+      setDebug(`Loaded ${state.list.length} ads • ${new Date().toLocaleTimeString()}`);
+      return;
+    }
+    throw new Error("Folder empty or all ads outside their schedule window");
+  }catch(err){
+    state.list = buildFallbackList(state.cfg);
+    state.idx = 0;
+    showCurrent();
+    scheduleNext();
+    state.lastFetch = now;
+    setDebug(`Fallback list (${state.list.length}) • ${new Date().toLocaleTimeString()}`);
+  }
+}
+
+/* ── Main ────────────────────────────────────────────────── */
+
+async function main(){
+  state.cfg = await loadConfig();
+
+  // 1) initial list (also starts the per-image rotation timer)
+  await refreshListIfNeeded(true);
+
+  // 2) poll for new/scheduled/expired images
+  setInterval(() => refreshListIfNeeded(false), Math.max(30000, Number(state.cfg.pollIntervalMs) || 300000));
+
+  // 3) refresh immediately when tab/screen becomes visible again (TV browser quirks)
+  document.addEventListener("visibilitychange", () => {
+    if(!document.hidden) refreshListIfNeeded(true);
+  });
+}
+
+main().catch(e => {
+  setDebug("Error: " + (e && e.message ? e.message : e));
+});
+</script>
+</body>
+</html>

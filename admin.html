@@ -755,13 +755,27 @@ async function apiFetch(path, opts = {}){
     "X-GitHub-Api-Version": "2022-11-28",
     ...(opts.headers || {})
   };
+  if(opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
   if(cfg.token) headers["Authorization"] = `Bearer ${cfg.token}`;
   const res = await fetch(`https://api.github.com${path}`, { ...opts, headers });
   if(!res.ok){
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || `HTTP ${res.status}`);
+    const err = new Error(body.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
+  if(res.status === 204) return null;
   return res.json();
+}
+
+async function getFileIfExists(path, branch){
+  const cfg = loadCfg();
+  try {
+    return await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${path}?ref=${encodeURIComponent(branch||"main")}`);
+  } catch(err){
+    if(err.status === 404) return null;
+    throw err;
+  }
 }
 
 /* ── tabs ────────────────────────────────────── */
@@ -1210,30 +1224,57 @@ $("mSave").addEventListener("click", async () => {
 /* For .url files: update content and/or rename atomically. */
 async function saveUrlFile(oldFile, newName, newTarget){
   const cfg = loadCfg();
+  const branch = cfg.branch || "main";
   const oldPath = `${ADS_FOLDER}/${oldFile.name}`;
   const newPath = `${ADS_FOLDER}/${newName}`;
   const content = btoa(unescape(encodeURIComponent(newTarget + "\n")));
 
   if(newPath === oldPath){
     // Just update content in-place (same filename).
-    await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        message: `admin: update ${oldFile.name}`,
-        content, sha: oldFile.sha, branch: cfg.branch
-      })
-    });
+    try {
+      await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          message: `admin: update ${oldFile.name}`,
+          content, sha: oldFile.sha, branch
+        })
+      });
+    } catch(err) {
+      throw new Error(`Couldn't update file content: ${err.message}`);
+    }
     return;
   }
-  // Rename: create new file with new content, delete old.
-  await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${newPath}`, {
-    method: "PUT",
-    body: JSON.stringify({ message: `admin: update/rename → ${newName}`, content, branch: cfg.branch })
-  });
-  await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}`, {
-    method: "DELETE",
-    body: JSON.stringify({ message: `admin: remove old ${oldFile.name}`, sha: oldFile.sha, branch: cfg.branch })
-  });
+
+  // Rename path: check for collision at destination first
+  let destSha = undefined;
+  try {
+    const existing = await getFileIfExists(newPath, branch);
+    if(existing) destSha = existing.sha;
+  } catch(err) {
+    throw new Error(`Step 1 – couldn't check for destination collision: ${err.message}`);
+  }
+
+  // Write destination (create or overwrite)
+  const putBody = { message: `admin: update/rename → ${newName}`, content, branch };
+  if(destSha) putBody.sha = destSha;
+  try {
+    await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${newPath}`, {
+      method: "PUT",
+      body: JSON.stringify(putBody)
+    });
+  } catch(err) {
+    throw new Error(`Step 2 – couldn't write destination file: ${err.message}`);
+  }
+
+  // Delete old file
+  try {
+    await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}`, {
+      method: "DELETE",
+      body: JSON.stringify({ message: `admin: remove old ${oldFile.name}`, sha: oldFile.sha, branch })
+    });
+  } catch(err) {
+    throw new Error(`Step 3 – new file saved but couldn't delete old one (${oldFile.name}): ${err.message}`);
+  }
 }
 
 $("mDelete").addEventListener("click", async () => {
@@ -1253,24 +1294,57 @@ $("mDelete").addEventListener("click", async () => {
   }
 });
 
-/* Rename = fetch content → PUT new name → DELETE old */
+/* Rename = fetch content → PUT new name (with sha if destination already exists) → DELETE old */
 async function renameFile(oldFile, newName){
   const cfg = loadCfg();
+  const branch = cfg.branch || "main";
   const oldPath = `${ADS_FOLDER}/${oldFile.name}`;
   const newPath = `${ADS_FOLDER}/${newName}`;
-  // fetch content (base64)
-  const detail = await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}?ref=${encodeURIComponent(cfg.branch||"main")}`);
+
+  // Step 1: fetch source content
+  let detail;
+  try {
+    detail = await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}?ref=${encodeURIComponent(branch)}`);
+  } catch(err) {
+    throw new Error(`Step 1 – couldn't read source file: ${err.message}`);
+  }
   const content = (detail.content || "").replace(/\n/g, "");
-  // put new
-  await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${newPath}`, {
-    method: "PUT",
-    body: JSON.stringify({ message: `admin: rename → ${newName}`, content, branch: cfg.branch })
-  });
-  // delete old
-  await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}`, {
-    method: "DELETE",
-    body: JSON.stringify({ message: `admin: remove old ${oldFile.name}`, sha: oldFile.sha, branch: cfg.branch })
-  });
+
+  // Step 2: check if destination already exists (partial-rename collision)
+  let destSha = undefined;
+  if(newPath !== oldPath){
+    try {
+      const existing = await getFileIfExists(newPath, branch);
+      if(existing) destSha = existing.sha; // supply sha → GitHub treats it as update, not conflict
+    } catch(err) {
+      throw new Error(`Step 2 – couldn't check for destination collision: ${err.message}`);
+    }
+  }
+
+  // Step 3: write destination (create or overwrite)
+  const putBody = { message: `admin: rename → ${newName}`, content, branch };
+  if(destSha) putBody.sha = destSha;
+  try {
+    await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${newPath}`, {
+      method: "PUT",
+      body: JSON.stringify(putBody)
+    });
+  } catch(err) {
+    throw new Error(`Step 3 – couldn't write destination file: ${err.message}`);
+  }
+
+  // Step 4: delete old file (skip if name didn't change)
+  if(newPath !== oldPath){
+    try {
+      await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}`, {
+        method: "DELETE",
+        body: JSON.stringify({ message: `admin: remove old ${oldFile.name}`, sha: oldFile.sha, branch })
+      });
+    } catch(err) {
+      // Destination was written successfully — surface a warning rather than hard failure
+      throw new Error(`Step 4 – new file saved but couldn't delete old one (${oldFile.name}): ${err.message}`);
+    }
+  }
 }
 
 /* ── misc ────────────────────────────────────── */

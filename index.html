@@ -1,415 +1,458 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baseline Bar & Grille – LED Ad</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
 
-  <!-- Aggressive no-cache for TV/players -->
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-  <meta http-equiv="Pragma" content="no-cache" />
-  <meta http-equiv="Expires" content="0" />
+  body {
+    background: #0a0a0a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Barlow Condensed', sans-serif;
+    /* No opacity hide — layout shows immediately */
+  }
 
-  <title>LED Ad Loop</title>
+  #frameCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    pointer-events: none;
+    filter: brightness(0.82) contrast(1.18) saturate(1.15);
+  }
 
-  <style>
-    :root{
-      --bg:#000;
-      --fit:contain;
-    }
-    html, body{
-      margin:0;
-      padding:0;
-      width:100%;
-      height:100%;
-      background:var(--bg);
-      overflow:hidden;
-      font-family: Arial, Helvetica, sans-serif;
-    }
-    /* Exact canvas size for your wall; device/player will scale as needed */
-    #stage{
-      width:800px;
-      height:400px;
-      background:var(--bg);
-      overflow:hidden;
-      position:relative;
-      transform-origin: top left;
-    }
+  .ad {
+    width: 800px;
+    height: 400px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    background: #000;
+  }
 
-    /* Scale stage to fill viewport while preserving aspect ratio */
-    #stageScaler{
-      width:100vw;
-      height:100vh;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      background:var(--bg);
-    }
+  /* LED scanline */
+  .ad::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.10) 2px,
+      rgba(0,0,0,0.10) 3px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
 
-    img#ad, iframe#adFrame{
-      position:absolute;
-      inset:0;
-      width:100%;
-      height:100%;
-      background:var(--bg);
-      display:block;
-      border:0;
-    }
-    img#ad{ object-fit:var(--fit); }
-    img#ad.hidden, iframe#adFrame.hidden{ display:none; }
+  /* ── MAIN ROW ── */
+  .main-row {
+    display: flex;
+    flex: 1;
+    height: 352px;
+  }
 
-    /* Optional tiny status (hidden by default) */
-    #debug{
-      position:absolute;
-      left:8px; bottom:6px;
-      color:#fff;
-      font-size:12px;
-      opacity:.65;
-      display:none;
-      text-shadow: 0 1px 2px rgba(0,0,0,.8);
-    }
-    body.debug #debug{ display:block; }
-  </style>
+  /* ── LEFT ── */
+  .left {
+    width: 360px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 24px 28px 24px 32px;
+    position: relative;
+    background: #000;
+    z-index: 2;
+  }
+
+  .left::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 10% 50%, rgba(220,30,30,0.10) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .brand {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 62px;
+    color: #fff;
+    line-height: 0.88;
+    letter-spacing: 2px;
+    text-shadow: 2px 3px 8px rgba(0,0,0,0.8);
+    margin-bottom: 12px;
+    white-space: nowrap;
+  }
+
+  .brand .amp {
+    color: #e02020;
+    text-shadow: 0 0 20px rgba(220,30,30,0.9), 0 0 50px rgba(220,30,30,0.4);
+  }
+
+  .divider {
+    width: 44px;
+    height: 3px;
+    background: #e02020;
+    box-shadow: 0 0 12px rgba(220,30,30,0.9), 0 0 28px rgba(220,30,30,0.5);
+    margin-bottom: 14px;
+    border-radius: 1px;
+  }
+
+  .tagline {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 19px;
+    letter-spacing: 6px;
+    color: rgba(255,255,255,0.4);
+    margin-bottom: 18px;
+  }
+
+  .info-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-bottom: 18px;
+  }
+
+  .info-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #e02020;
+    box-shadow: 0 0 8px rgba(220,30,30,1);
+    flex-shrink: 0;
+  }
+
+  .info-text {
+    font-size: 14px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.80);
+    letter-spacing: 0.5px;
+  }
+
+  .info-text .muted {
+    color: rgba(255,255,255,0.36);
+    font-weight: 400;
+    font-size: 13px;
+  }
+
+  .hh-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(220,30,30,0.14);
+    border: 1px solid rgba(220,30,30,0.5);
+    border-radius: 5px;
+    padding: 12px 16px;
+    box-shadow: 0 0 18px rgba(220,30,30,0.18), inset 0 0 18px rgba(220,30,30,0.05);
+    white-space: nowrap;
+    flex-wrap: nowrap;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  @keyframes hh-pulse {
+    0%, 100% { text-shadow: 0 0 10px rgba(255,220,30,0.6); }
+    50% { text-shadow: 0 0 22px rgba(255,220,30,1), 0 0 40px rgba(255,220,30,0.4); }
+  }
+
+  .hh-label {
+    animation: hh-pulse 2.5s ease-in-out infinite;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 24px;
+    letter-spacing: 2px;
+    color: #ffe033;
+    text-shadow: 0 0 12px rgba(255,220,30,0.8);
+  }
+
+  .hh-sep { width: 1px; height: 18px; background: rgba(220,30,30,0.4); }
+
+  .hh-time {
+    font-size: 20px;
+    font-weight: 900;
+    color: #fff;
+    letter-spacing: 1px;
+    text-shadow: 0 0 8px rgba(255,255,255,0.3);
+    font-family: 'Bebas Neue', sans-serif;
+  }
+
+  /* ── RIGHT ── */
+  .right {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #080000;
+  }
+
+  /* Invisible shield over video — also kills Cast hover target */
+  .video-shield {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background: transparent;
+  }
+
+  /* left blend fade */
+  .right::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, #000 0%, rgba(0,0,0,0.55) 18%, rgba(0,0,0,0.15) 42%, transparent 65%);
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  /* bottom fade to black */
+  .ember {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 160px;
+    background: linear-gradient(0deg, #000 0%, rgba(0,0,0,0.7) 40%, transparent 100%);
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  /* ── OPEN TO THE PUBLIC badge ── */
+  .public-badge {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    z-index: 6;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .public-inner {
+    border: 3px solid rgba(220,30,30,0.85);
+    border-radius: 6px;
+    padding: 14px 20px;
+    background: rgba(0,0,0,0.72);
+    backdrop-filter: blur(4px);
+    box-shadow:
+      0 0 24px rgba(220,30,30,0.5),
+      0 0 60px rgba(220,30,30,0.2),
+      inset 0 0 20px rgba(220,30,30,0.08);
+    transform: rotate(-2deg);
+  }
+
+  .public-main {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 34px;
+    letter-spacing: 3px;
+    color: #fff;
+    line-height: 1;
+    text-shadow:
+      0 0 16px rgba(255,50,50,0.7),
+      0 0 40px rgba(255,50,50,0.3);
+  }
+
+  .public-main .accent {
+    color: #ffe033;
+    text-shadow: 0 0 14px rgba(255,220,30,0.7), 0 0 30px rgba(255,220,30,0.35), 0 0 60px rgba(255,220,30,0.15);
+    animation: public-pulse 2.5s ease-in-out infinite;
+  }
+
+  @keyframes public-pulse {
+    0%, 100% { text-shadow: 0 0 14px rgba(255,220,30,0.7), 0 0 30px rgba(255,220,30,0.35); }
+    50% { text-shadow: 0 0 20px rgba(255,220,30,1), 0 0 50px rgba(255,220,30,0.5), 0 0 80px rgba(255,220,30,0.2); }
+  }
+
+  /* ── BOTTOM TICKER ── */
+  .ticker {
+    height: 48px;
+    background: #cc1a1a;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    position: relative;
+    z-index: 10;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.5);
+    flex-shrink: 0;
+  }
+
+  .ticker-tag {
+    flex-shrink: 0;
+    background: #111;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 16px;
+    border-right: 2px solid rgba(255,255,255,0.2);
+    z-index: 2;
+    width: 360px;
+  }
+
+  .ticker-tag span {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px;
+    letter-spacing: 1.5px;
+    color: #ffffff;
+    font-weight: 900;
+    text-shadow: 0 0 8px rgba(255,255,255,0.4);
+    white-space: nowrap;
+  }
+
+  .ticker-item {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px;
+    letter-spacing: 2px;
+    color: #fff;
+    font-weight: 900;
+    text-shadow: 0 0 12px rgba(255,255,255,0.4);
+    white-space: nowrap;
+  }
+</style>
 </head>
 <body>
-  <div id="stageScaler">
-    <div id="stage">
-      <img id="ad" alt="Advertisement" />
-      <iframe id="adFrame" class="hidden" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="no-referrer"></iframe>
-      <div id="debug"></div>
+
+<div class="ad">
+
+  <div class="main-row">
+
+    <!-- LEFT -->
+    <div class="left">
+      <div class="brand">BASELINE<br>BAR <span class="amp">&amp;</span> GRILLE</div>
+      <div class="divider"></div>
+      <div class="tagline" style="color:#e02020;text-shadow:0 0 16px rgba(220,30,30,0.6);letter-spacing:8px;text-align:left;padding-left:2px;">Eat. Drink. Connect.</div>
+      <div class="info-rows">
+        <div class="info-row" style="margin-top:2px; justify-content:center;">
+          <div style="display:flex;align-items:center;gap:14px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:10px 20px 10px 14px;">
+            <span style="font-size:20px;letter-spacing:4px;color:#fff;text-transform:uppercase;font-weight:700;border-right:1px solid rgba(255,255,255,0.2);padding-right:16px;white-space:nowrap;">INSIDE</span>
+            <img src="Logo LevelUP.png" alt="LevelUp" style="height:38px;width:auto;object-fit:contain;">
+          </div>
+        </div>
+      </div>
+      <div class="hh-badge">
+        <div class="hh-label">Happy Hour</div>
+        <div class="hh-sep"></div>
+        <div class="hh-time">Tue – Fri &nbsp;·&nbsp; 4 – 6 PM</div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="right">
+      <canvas id="frameCanvas"></canvas>
+      <div class="ember"></div>
+
+      <!-- EVENTS tab -->
+      <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);background:#cc1a1a;padding:5px 20px;border-radius:4px 4px 0 0;z-index:8;white-space:nowrap;box-shadow:0 -4px 16px rgba(200,20,20,0.5);">
+        <span style="font-family:'Bebas Neue',sans-serif;font-size:15px;letter-spacing:4px;color:#fff;">EVENTS</span>
+      </div>
+
+      <!-- OPEN TO THE PUBLIC -->
+      <div class="public-badge">
+        <div class="public-inner">
+          <div class="public-main">OPEN<br>TO THE<br><span class="accent">PUBLIC</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- BOTTOM BAR -->
+  <div class="ticker">
+    <div class="ticker-tag"><span>OPEN TUESDAY – SATURDAY &nbsp;·&nbsp; 11AM – 10PM</span></div>
+    <div style="flex:1;display:flex;align-items:center;justify-content:center;">
+      <span class="ticker-item">BINGO NIGHT &nbsp;•&nbsp; TRIVIA NIGHT &nbsp;•&nbsp; SPORTS NIGHT</span>
     </div>
   </div>
 
+</div>
+
 <script>
-/**
- * LED Ad Loop (GitHub folder auto-discovery)
- * - Put any .png/.jpg/.jpeg/.webp/.gif into /ads (or config.adsFolder)
- * - No code edits needed when you add/remove images.
- * - Default rotation duration from config.json durationMs (can be overridden per image).
- * - Re-reads the folder list every few minutes (configurable via config.json pollIntervalMs).
- *
- * SCHEDULE via filename (all markers optional, any order):
- *   __sYYYYMMDD   start date (inclusive) — image won't show before this date
- *   __eYYYYMMDD   end date (exclusive)   — image won't show on or after this date
- *   __dSECONDS    per-image duration in seconds (overrides config durationMs)
- *   __off         disabled — never shown (useful to keep an ad without removing it)
- *   __wRULE       weekday recurrence; see below (no __w = every day)
- *   __YYYYMMDD    legacy: same as __eYYYYMMDD (for backwards compatibility)
- *
- *   Weekday rule (__w) tokens, comma-separated:
- *     MON, TUE, WED, THU, FRI, SAT, SUN    shown every matching weekday
- *     FRI3                                  shown only on the 3rd Friday of the month
- *     MONL                                  shown only on the last Monday of the month
- *     MON,WED,FRI                           any Mon/Wed/Fri
- *     MON1,MON3                             1st and 3rd Monday of the month
- *
- *   Examples:
- *     sale__s20260401__e20260501__d10.jpg   shown Apr 1–30, 2026, for 10s each rotation
- *     wing_wed__wWED.jpg                    shown every Wednesday
- *     third_fri__wFRI3__d15.jpg             shown 15s each on the 3rd Friday of every month
- *     disabled__off.jpg                     kept in folder but never shown
- *     evergreen_ad.png                      always shown, default duration
- *
- * Works best when hosted on GitHub Pages.
- */
+  // ── PNG Sequence Player ──────────────────────────────────
+  const BASE_URL   = 'https://pub-d884496adff243c08bda3301b36cb50f.r2.dev/Outdoorsign/';
+  const FRAME_COUNT = 145;
+  const FPS         = 18;
+  const INTERVAL_MS = 1000 / FPS; // ~55.5ms per frame
 
-const elImg = document.getElementById("ad");
-const elFrame = document.getElementById("adFrame");
-const elDebug = document.getElementById("debug");
+  const canvas = document.getElementById('frameCanvas');
+  const ctx    = canvas.getContext('2d');
 
-const state = {
-  cfg: null,
-  list: [],
-  idx: 0,
-  lastFetch: 0,
-  timer: null
-};
-
-/* ── Helpers ─────────────────────────────────────────────── */
-
-function qsBool(name){
-  const v = new URLSearchParams(location.search).get(name);
-  return v === "1" || v === "true" || v === "yes";
-}
-
-if(qsBool("debug")) document.body.classList.add("debug");
-
-function setDebug(msg){
-  elDebug.textContent = msg || "";
-}
-
-function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
-
-function inferRepoFromLocation(){
-  // Supports:
-  // 1) https://OWNER.github.io/REPO/...
-  // 2) https://OWNER.github.io/  (repo = OWNER.github.io)
-  const host = location.hostname.toLowerCase();
-  const pathParts = location.pathname.split("/").filter(Boolean);
-
-  if(host.endsWith(".github.io")){
-    const owner = host.split(".github.io")[0];
-    const repo = (pathParts.length >= 1) ? pathParts[0] : host;
-    const basePath = (pathParts.length >= 1) ? `/${pathParts[0]}/` : "/";
-    return { owner, repo, basePath };
+  // Size canvas to match its container (440×352 — right panel minus ticker)
+  function sizeCanvas() {
+    canvas.width  = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
   }
-  return null;
-}
+  sizeCanvas();
+  window.addEventListener('resize', sizeCanvas);
 
-function normalizeExt(name){
-  const m = name.toLowerCase().match(/\.(png|jpg|jpeg|webp|gif|url)$/);
-  return m ? m[1] : null;
-}
-function isUrlFile(name){ return /\.url$/i.test(name); }
-
-/* ── Schedule parsing ────────────────────────────────────── */
-
-const DOW_CODES = { SUN:0, MON:1, TUE:2, WED:3, THU:4, FRI:5, SAT:6 };
-
-/**
- * Extracts schedule info from a filename.
- * Returns { start, end, durationMs, disabled, weekday }.
- */
-function parseSchedule(filename){
-  const base = filename.replace(/\.[^.]+$/,"");
-  const out = { start: null, end: null, durationMs: null, disabled: false, weekday: null };
-
-  const mkDate = (y,m,d) => {
-    const dt = new Date(parseInt(y,10), parseInt(m,10)-1, parseInt(d,10));
-    dt.setHours(0,0,0,0);
-    return dt;
-  };
-
-  let m;
-  if((m = base.match(/__s(\d{4})(\d{2})(\d{2})(?:__|$)/))) out.start = mkDate(m[1],m[2],m[3]);
-  if((m = base.match(/__e(\d{4})(\d{2})(\d{2})(?:__|$)/))) out.end   = mkDate(m[1],m[2],m[3]);
-  if((m = base.match(/__d(\d+)(?:__|$)/)))                 out.durationMs = parseInt(m[1],10) * 1000;
-  if(/__off(?:__|$)/.test(base))                           out.disabled = true;
-  if((m = base.match(/__w([A-Z0-9,L]+)(?:__|$)/)))         out.weekday = m[1];
-
-  if(!out.start && !out.end && !out.durationMs && !out.disabled && !out.weekday){
-    const legacy = base.match(/__(\d{4})(\d{2})(\d{2})$/);
-    if(legacy) out.end = mkDate(legacy[1], legacy[2], legacy[3]);
+  // Build frame URL: ezgif-frame-001.png … ezgif-frame-145.png
+  function frameUrl(n) {
+    const num = String(n).padStart(3, '0');
+    return `${BASE_URL}ezgif-frame-${num}.png`;
   }
-  return out;
-}
 
-function nthWeekdayOfMonth(date){
-  return Math.ceil(date.getDate() / 7);
-}
-function isLastWeekdayOfMonth(date){
-  const next = new Date(date); next.setDate(date.getDate() + 7);
-  return next.getMonth() !== date.getMonth();
-}
+  // Preload all frames in parallel into Image objects
+  const frames = new Array(FRAME_COUNT).fill(null);
+  let loadedCount = 0;
 
-function matchesWeekdayRule(rule, today){
-  if(!rule) return true;
-  const todayDow = today.getDay();
-  const todayNth = nthWeekdayOfMonth(today);
-  const todayIsLast = isLastWeekdayOfMonth(today);
-  for(const raw of rule.split(",")){
-    const m = raw.match(/^([A-Z]{3})(\d|L)?$/);
-    if(!m) continue;
-    const dow = DOW_CODES[m[1]];
-    if(dow == null || dow !== todayDow) continue;
-    const mod = m[2];
-    if(!mod) return true;
-    if(mod === "L"){ if(todayIsLast) return true; }
-    else           { if(parseInt(mod,10) === todayNth) return true; }
+  function loadAllFrames() {
+    return new Promise(resolve => {
+      for (let i = 0; i < FRAME_COUNT; i++) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          frames[i] = img;
+          loadedCount++;
+          if (loadedCount === FRAME_COUNT) resolve();
+        };
+        img.onerror = () => {
+          // Missing frame — use null, player will skip gracefully
+          loadedCount++;
+          if (loadedCount === FRAME_COUNT) resolve();
+        };
+        img.src = frameUrl(i + 1);
+      }
+    });
   }
-  return false;
-}
 
-function isActiveToday(filename){
-  const s = parseSchedule(filename);
-  if(s.disabled) return false;
-  const today = new Date(); today.setHours(0,0,0,0);
-  if(s.start && today < s.start) return false;
-  if(s.end && today >= s.end)    return false;
-  if(!matchesWeekdayRule(s.weekday, today)) return false;
-  return true;
-}
-
-/* ── Config ──────────────────────────────────────────────── */
-
-async function loadConfig(){
-  const url = `config.json?v=${Date.now()}`;
-  const res = await fetch(url, { cache: "no-store" });
-  if(!res.ok) throw new Error("config.json not found");
-  const cfg = await res.json();
-
-  document.documentElement.style.setProperty("--bg", cfg.bg || "#000");
-  document.documentElement.style.setProperty("--fit", cfg.fit || "contain");
-  return cfg;
-}
-
-/* ── GitHub API ──────────────────────────────────────────── */
-
-async function fetchAdListViaGitHubAPI(cfg){
-  const inferred = inferRepoFromLocation();
-  if(!inferred) throw new Error("Not hosted on GitHub Pages (can't infer repo).");
-
-  const folder = (cfg.adsFolder || "ads").replace(/^\/+|\/+$/g,"");
-  const api = `https://api.github.com/repos/${inferred.owner}/${inferred.repo}/contents/${folder}?ref=main`;
-
-  const res = await fetch(api, { cache: "no-store" });
-  if(!res.ok){
-    const res2 = await fetch(api.replace("ref=main","ref=master"), { cache:"no-store" });
-    if(!res2.ok) throw new Error(`GitHub API failed (${res.status})`);
-    return parseGitHubContents(await res2.json());
+  // Draw a frame cover-fit into the canvas (same as object-fit:cover object-position:center 25%)
+  function drawFrame(img) {
+    if (!img) return;
+    const cw = canvas.width, ch = canvas.height;
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    const scale = Math.max(cw / iw, ch / ih);
+    const dw = iw * scale, dh = ih * scale;
+    const dx = (cw - dw) / 2;
+    // 25% vertical position (same as object-position: center 25%)
+    const dy = (ch - dh) * 0.25;
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.drawImage(img, dx, dy, dw, dh);
   }
-  return parseGitHubContents(await res.json());
-}
 
-function parseGitHubContents(json){
-  if(!Array.isArray(json)) return [];
+  // Start the loop once all frames are loaded
+  let frameIdx = 0;
+  let lastTime = 0;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const files = json
-    .filter(x => x && x.type === "file" && normalizeExt(x.name))
-    // ── Schedule filter: skip files outside their active window ──
-    .filter(x => isActiveToday(x.name))
-    .map(x => ({
-      url: x.download_url,
-      name: x.name,
-      type: isUrlFile(x.name) ? "url" : "image"
-    }))
-    .filter(x => x.url);
-
-  return files;
-}
-
-async function resolveUrlTargets(list){
-  // For any .url entries, fetch the file contents (the target URL) in parallel.
-  await Promise.all(list.map(async (item) => {
-    if(item.type !== "url" || item.target) return;
-    try {
-      const r = await fetch(item.url, { cache: "no-store" });
-      const text = (await r.text()).trim().split(/\r?\n/)[0].trim();
-      if(/^https?:\/\//i.test(text)) item.target = text;
-    } catch {}
-  }));
-}
-
-/* ── Shuffle / fallback ──────────────────────────────────── */
-
-function shuffle(arr){
-  const a = arr.slice();
-  for(let i = a.length - 1; i > 0; i--){
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+  function tick(ts) {
+    requestAnimationFrame(tick);
+    if (ts - lastTime < INTERVAL_MS) return;
+    lastTime = ts;
+    drawFrame(frames[frameIdx]);
+    frameIdx = (frameIdx + 1) % FRAME_COUNT;
   }
-  return a;
-}
 
-function buildFallbackList(cfg){
-  const base = inferRepoFromLocation()?.basePath || "./";
-  const fallback = (cfg.fallbackImages && cfg.fallbackImages.length)
-    ? cfg.fallbackImages
-    : ["ad.png"];
-  return fallback.map(p => ({ url: base + p.replace(/^\/+/,""), name: p, type: "image" }));
-}
-
-/* ── Display ─────────────────────────────────────────────── */
-
-function showImage(url){
-  const u = new URL(url, location.href);
-  u.searchParams.set("v", Date.now());
-  elFrame.classList.add("hidden");
-  elFrame.src = "about:blank";
-  elImg.classList.remove("hidden");
-  elImg.src = u.toString();
-}
-
-function showUrl(target){
-  elImg.classList.add("hidden");
-  elImg.src = "";
-  elFrame.classList.remove("hidden");
-  elFrame.src = target;
-}
-
-function durationForCurrent(){
-  const item = state.list[state.idx];
-  const defaultMs = Math.max(1000, Number(state.cfg.durationMs) || 6000);
-  if(!item || !item.name) return defaultMs;
-  const s = parseSchedule(item.name);
-  return (s.durationMs && s.durationMs >= 1000) ? s.durationMs : defaultMs;
-}
-
-function showCurrent(){
-  const item = state.list[state.idx];
-  if(!item) return;
-  if(item.type === "url" && item.target){
-    showUrl(item.target);
-  } else {
-    showImage(item.url);
-  }
-  setDebug(`${state.idx + 1}/${state.list.length} • ${new Date().toLocaleTimeString()}`);
-}
-
-function scheduleNext(){
-  clearTimeout(state.timer);
-  state.timer = setTimeout(() => {
-    if(!state.list.length) return;
-    state.idx = (state.idx + 1) % state.list.length;
-    showCurrent();
-    scheduleNext();
-  }, durationForCurrent());
-}
-
-/* ── Poll / refresh ──────────────────────────────────────── */
-
-async function refreshListIfNeeded(force = false){
-  const now = Date.now();
-  if(!force && (now - state.lastFetch) < state.cfg.pollIntervalMs) return;
-
-  try{
-    let list = await fetchAdListViaGitHubAPI(state.cfg);
-    await resolveUrlTargets(list);
-    // drop .url entries that didn't resolve to a valid URL
-    list = list.filter(x => x.type !== "url" || x.target);
-    if(list.length){
-      list = shuffle(list);
-      state.list = list;
-      state.idx = 0;
-      showCurrent();
-      scheduleNext();
-      state.lastFetch = now;
-      setDebug(`Loaded ${state.list.length} ads • ${new Date().toLocaleTimeString()}`);
-      return;
-    }
-    throw new Error("Folder empty or all ads outside their schedule window");
-  }catch(err){
-    state.list = buildFallbackList(state.cfg);
-    state.idx = 0;
-    showCurrent();
-    scheduleNext();
-    state.lastFetch = now;
-    setDebug(`Fallback list (${state.list.length}) • ${new Date().toLocaleTimeString()}`);
-  }
-}
-
-/* ── Main ────────────────────────────────────────────────── */
-
-async function main(){
-  state.cfg = await loadConfig();
-
-  // 1) initial list (also starts the per-image rotation timer)
-  await refreshListIfNeeded(true);
-
-  // 2) poll for new/scheduled/expired images
-  setInterval(() => refreshListIfNeeded(false), Math.max(30000, Number(state.cfg.pollIntervalMs) || 300000));
-
-  // 3) refresh immediately when tab/screen becomes visible again (TV browser quirks)
-  document.addEventListener("visibilitychange", () => {
-    if(!document.hidden) refreshListIfNeeded(true);
+  loadAllFrames().then(() => {
+    requestAnimationFrame(tick);
   });
-}
-
-main().catch(e => {
-  setDebug("Error: " + (e && e.message ? e.message : e));
-});
 </script>
 </body>
 </html>

@@ -403,25 +403,30 @@
   // Preload all frames in parallel into Image objects
   const frames = new Array(FRAME_COUNT).fill(null);
   let loadedCount = 0;
+  let loopStarted = false;
+
+  function startLoopIfNeeded() {
+    if (!loopStarted && frames[0]) {
+      loopStarted = true;
+      requestAnimationFrame(tick);
+    }
+  }
 
   function loadAllFrames() {
-    return new Promise(resolve => {
-      for (let i = 0; i < FRAME_COUNT; i++) {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          frames[i] = img;
-          loadedCount++;
-          if (loadedCount === FRAME_COUNT) resolve();
-        };
-        img.onerror = () => {
-          // Missing frame — use null, player will skip gracefully
-          loadedCount++;
-          if (loadedCount === FRAME_COUNT) resolve();
-        };
-        img.src = frameUrl(i + 1);
-      }
-    });
+    for (let i = 0; i < FRAME_COUNT; i++) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        frames[i] = img;
+        loadedCount++;
+        startLoopIfNeeded();
+      };
+      img.onerror = () => {
+        loadedCount++;
+        startLoopIfNeeded();
+      };
+      img.src = frameUrl(i + 1);
+    }
   }
 
   // Draw a frame cover-fit into the canvas (same as object-fit:cover object-position:center 25%)
@@ -438,7 +443,7 @@
     ctx.drawImage(img, dx, dy, dw, dh);
   }
 
-  // Start the loop once all frames are loaded
+  // Draw loop — skips frames not yet loaded, loops back if needed
   let frameIdx = 0;
   let lastTime = 0;
 
@@ -446,13 +451,17 @@
     requestAnimationFrame(tick);
     if (ts - lastTime < INTERVAL_MS) return;
     lastTime = ts;
-    drawFrame(frames[frameIdx]);
-    frameIdx = (frameIdx + 1) % FRAME_COUNT;
+    // Find next available frame (skip nulls that haven't loaded yet)
+    let safeIdx = frameIdx;
+    for (let i = 0; i < FRAME_COUNT; i++) {
+      const idx = (frameIdx + i) % FRAME_COUNT;
+      if (frames[idx]) { safeIdx = idx; break; }
+    }
+    drawFrame(frames[safeIdx]);
+    frameIdx = (safeIdx + 1) % FRAME_COUNT;
   }
 
-  loadAllFrames().then(() => {
-    requestAnimationFrame(tick);
-  });
+  loadAllFrames();
 </script>
 </body>
 </html>

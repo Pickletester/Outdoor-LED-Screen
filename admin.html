@@ -439,6 +439,53 @@
       background: #000; border: 1px solid var(--border-2);
       border-radius: 10px; margin-top: 10px;
     }
+
+    /* Multi-select */
+    .ad-select {
+      position: absolute; top: 10px; right: 10px;
+      width: 26px; height: 26px;
+      background: rgba(0,0,0,.55);
+      border: 1.5px solid rgba(255,255,255,.5);
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      color: transparent;
+      font-weight: 700; font-size: 16px; line-height: 1;
+      transition: all .15s;
+      backdrop-filter: blur(4px);
+    }
+    .ad-select:hover { border-color: #fff; }
+    .ad.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .ad.selected .ad-select {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .bulk-bar {
+      position: sticky; top: 60px; z-index: 5;
+      background: var(--accent);
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 10px;
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 14px;
+      box-shadow: 0 4px 16px rgba(79,140,255,.35);
+    }
+    .bulk-bar .count { font-weight: 700; }
+    .bulk-bar .spacer { flex: 1; }
+    .bulk-bar button {
+      background: rgba(255,255,255,.15);
+      border: 1px solid rgba(255,255,255,.25);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-weight: 600; font-size: 13px;
+      cursor: pointer;
+    }
+    .bulk-bar button:hover { background: rgba(255,255,255,.25); }
+    .bulk-bar button.danger { background: var(--danger); border-color: var(--danger); }
+    .bulk-bar button.danger:hover { background: var(--danger-2); }
   </style>
 </head>
 <body>
@@ -574,6 +621,12 @@
     <div class="section-title">
       <h2>Current Playlist</h2>
       <span class="count" id="listCount"></span>
+    </div>
+    <div id="bulkBar" class="bulk-bar" style="display:none">
+      <span class="count"><span id="bulkCount">0</span> selected</span>
+      <button id="bulkClear">Clear</button>
+      <span class="spacer"></span>
+      <button id="bulkDelete" class="danger">Delete selected</button>
     </div>
     <div id="list"><div class="empty">Connect your GitHub token above to load the playlist.</div></div>
 
@@ -1064,6 +1117,57 @@ $("uploadBtn").addEventListener("click", async () => {
   refreshList();
 });
 
+/* ── multi-select + bulk delete ──────────── */
+const selectedFiles = new Map(); // name -> file object
+
+function toggleSelect(card, file){
+  if(selectedFiles.has(file.name)){
+    selectedFiles.delete(file.name);
+    card.classList.remove("selected");
+  } else {
+    selectedFiles.set(file.name, file);
+    card.classList.add("selected");
+  }
+  updateBulkBar();
+}
+
+function updateBulkBar(){
+  const n = selectedFiles.size;
+  $("bulkBar").style.display = n ? "flex" : "none";
+  $("bulkCount").textContent = n;
+}
+
+$("bulkClear").addEventListener("click", () => {
+  selectedFiles.clear();
+  document.querySelectorAll(".ad.selected").forEach(c => c.classList.remove("selected"));
+  updateBulkBar();
+});
+
+$("bulkDelete").addEventListener("click", async () => {
+  const files = Array.from(selectedFiles.values());
+  if(!files.length) return;
+  if(!confirm(`Delete ${files.length} item${files.length===1?"":"s"}? This can't be undone.`)) return;
+  const cfg = loadCfg();
+  $("bulkDelete").disabled = true;
+  $("bulkDelete").textContent = "Deleting…";
+  let ok = 0, fail = 0;
+  for(const f of files){
+    try {
+      await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${ADS_FOLDER}/${f.name}`, {
+        method: "DELETE",
+        body: JSON.stringify({ message: `admin: bulk delete ${f.name}`, sha: f.sha, branch: cfg.branch })
+      });
+      ok++;
+    } catch(err){
+      fail++;
+    }
+  }
+  $("bulkDelete").disabled = false;
+  $("bulkDelete").textContent = "Delete selected";
+  if(fail) alert(`Deleted ${ok}. Failed ${fail}.`);
+  refreshList();
+});
+
 /* ── list ──────────────────────────────────── */
 async function refreshList(){
   const cfg = loadCfg();
@@ -1098,6 +1202,7 @@ async function refreshList(){
       const card = document.createElement("div");
       card.className = "ad" + (s.disabled ? " disabled" : "") + (isUrl ? " url-card" : "");
 
+      const selectBox = `<div class="ad-select" title="Select">✓</div>`;
       const thumb = isUrl
         ? `<div class="ad-thumb">
              <div>
@@ -1105,10 +1210,12 @@ async function refreshList(){
                <div class="url-text">${f._target || "(unresolved URL)"}</div>
              </div>
              <div class="ad-badges"><span class="badge ${st.kind}">${st.label}</span></div>
+             ${selectBox}
            </div>`
         : `<div class="ad-thumb">
              <img src="${f.download_url}" alt="" loading="lazy" />
              <div class="ad-badges"><span class="badge ${st.kind}">${st.label}</span></div>
+             ${selectBox}
            </div>`;
 
       const viewHref = isUrl ? (f._target || "#") : f.download_url;
@@ -1132,10 +1239,17 @@ async function refreshList(){
         </div>
       `;
       card.querySelector(".edit-btn").addEventListener("click", () => openEditor(f));
+      card.querySelector(".ad-select").addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleSelect(card, f);
+      });
+      card._file = f;
       grid.appendChild(card);
     }
     elList.innerHTML = "";
     elList.appendChild(grid);
+    selectedFiles.clear();
+    updateBulkBar();
   } catch(err){
     elList.innerHTML = `<div class="empty" style="color:var(--danger)">${err.message}</div>`;
   }

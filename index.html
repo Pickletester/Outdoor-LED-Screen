@@ -373,13 +373,13 @@ function partitionList(list){
       state.nonGroup.push(item);
     }
   }
-  // Default interval = even spread when group has no explicit __i marker
-  const total = list.length;
+  // Default behavior: treat the group as ONE rotation slot — one variant
+  // every (nonGroup + 1) slots, so a cycle = each non-group ad + one group pick.
   for(const g of Object.values(state.groups)){
     if(!isFinite(g.interval)){
-      g.interval = Math.max(2, Math.ceil(total / Math.max(1, g.ads.length)));
+      g.interval = Math.max(1, state.nonGroup.length + 1);
     }
-    g.ads = shuffle(g.ads); // shuffle within each group
+    g.ads = shuffle(g.ads);
   }
   state.nonGroup = shuffle(state.nonGroup);
 }

@@ -93,6 +93,8 @@
  *   __dSECONDS    per-image duration in seconds (overrides config durationMs)
  *   __off         disabled — never shown (useful to keep an ad without removing it)
  *   __wRULE       weekday recurrence; see below (no __w = every day)
+ *   __gNAME       rotation group; same-group ads are interleaved evenly (e.g. __gLU)
+ *   __iN          mix in one ad from this group every N slots (default = even spread)
  *   __YYYYMMDD    legacy: same as __eYYYYMMDD (for backwards compatibility)
  *
  *   Weekday rule (__w) tokens, comma-separated:
@@ -118,8 +120,12 @@ const elDebug = document.getElementById("debug");
 
 const state = {
   cfg: null,
-  list: [],
-  idx: 0,
+  list: [],          // all active ads (for fallback reference)
+  current: null,     // ad currently displayed
+  groups: {},        // groupName -> { ads, interval, idx }
+  nonGroup: [],      // ads with no group
+  nonGroupIdx: 0,
+  slot: 0,
   lastFetch: 0,
   timer: null
 };
@@ -171,7 +177,7 @@ const DOW_CODES = { SUN:0, MON:1, TUE:2, WED:3, THU:4, FRI:5, SAT:6 };
  */
 function parseSchedule(filename){
   const base = filename.replace(/\.[^.]+$/,"");
-  const out = { start: null, end: null, durationMs: null, disabled: false, weekday: null };
+  const out = { start: null, end: null, durationMs: null, disabled: false, weekday: null, group: null, interval: null };
 
   const mkDate = (y,m,d) => {
     const dt = new Date(parseInt(y,10), parseInt(m,10)-1, parseInt(d,10));
@@ -185,8 +191,10 @@ function parseSchedule(filename){
   if((m = base.match(/__d(\d+)(?:__|$)/)))                 out.durationMs = parseInt(m[1],10) * 1000;
   if(/__off(?:__|$)/.test(base))                           out.disabled = true;
   if((m = base.match(/__w([A-Z0-9,L]+)(?:__|$)/)))         out.weekday = m[1];
+  if((m = base.match(/__g([A-Z0-9]+)(?:__|$)/)))           out.group = m[1];
+  if((m = base.match(/__i(\d+)(?:__|$)/)))                 out.interval = parseInt(m[1],10);
 
-  if(!out.start && !out.end && !out.durationMs && !out.disabled && !out.weekday){
+  if(!out.start && !out.end && !out.durationMs && !out.disabled && !out.weekday && !out.group && !out.interval){
     const legacy = base.match(/__(\d{4})(\d{2})(\d{2})$/);
     if(legacy) out.end = mkDate(legacy[1], legacy[2], legacy[3]);
   }
@@ -330,7 +338,7 @@ function showUrl(target){
 }
 
 function durationForCurrent(){
-  const item = state.list[state.idx];
+  const item = state.current;
   const defaultMs = Math.max(1000, Number(state.cfg.durationMs) || 6000);
   if(!item || !item.name) return defaultMs;
   const s = parseSchedule(item.name);
@@ -338,22 +346,85 @@ function durationForCurrent(){
 }
 
 function showCurrent(){
-  const item = state.list[state.idx];
+  const item = state.current;
   if(!item) return;
   if(item.type === "url" && item.target){
     showUrl(item.target);
   } else {
     showImage(item.url);
   }
-  setDebug(`${state.idx + 1}/${state.list.length} • ${new Date().toLocaleTimeString()}`);
+  setDebug(`${item.name} • ${new Date().toLocaleTimeString()}`);
+}
+
+/* ── Interleaved rotation ─────────────────────────────── */
+
+function partitionList(list){
+  state.groups = {};
+  state.nonGroup = [];
+  state.nonGroupIdx = 0;
+  state.slot = 0;
+  for(const item of list){
+    const s = parseSchedule(item.name);
+    if(s.group){
+      const g = state.groups[s.group] || (state.groups[s.group] = { ads: [], interval: Infinity, idx: 0 });
+      g.ads.push(item);
+      if(s.interval && s.interval >= 2) g.interval = Math.min(g.interval, s.interval);
+    } else {
+      state.nonGroup.push(item);
+    }
+  }
+  // Default interval = even spread when group has no explicit __i marker
+  const total = list.length;
+  for(const g of Object.values(state.groups)){
+    if(!isFinite(g.interval)){
+      g.interval = Math.max(2, Math.ceil(total / Math.max(1, g.ads.length)));
+    }
+    g.ads = shuffle(g.ads); // shuffle within each group
+  }
+  state.nonGroup = shuffle(state.nonGroup);
+}
+
+function pickNextAd(){
+  // Any group due at this slot?
+  const due = [];
+  for(const [name, g] of Object.entries(state.groups)){
+    if(state.slot % g.interval === 0) due.push([name, g]);
+  }
+  if(due.length){
+    // Multi-due: rotate by slot for deterministic distribution
+    const [, g] = due[state.slot % due.length];
+    const ad = g.ads[g.idx % g.ads.length];
+    g.idx++;
+    state.slot++;
+    return ad;
+  }
+  if(state.nonGroup.length){
+    const ad = state.nonGroup[state.nonGroupIdx % state.nonGroup.length];
+    state.nonGroupIdx++;
+    state.slot++;
+    return ad;
+  }
+  // No non-group and no group due — fall back to any group's next ad
+  for(const g of Object.values(state.groups)){
+    if(g.ads.length){
+      const ad = g.ads[g.idx % g.ads.length];
+      g.idx++;
+      state.slot++;
+      return ad;
+    }
+  }
+  state.slot++;
+  return null;
 }
 
 function scheduleNext(){
   clearTimeout(state.timer);
   state.timer = setTimeout(() => {
-    if(!state.list.length) return;
-    state.idx = (state.idx + 1) % state.list.length;
-    showCurrent();
+    const next = pickNextAd();
+    if(next){
+      state.current = next;
+      showCurrent();
+    }
     scheduleNext();
   }, durationForCurrent());
 }
@@ -370,11 +441,13 @@ async function refreshListIfNeeded(force = false){
     // drop .url entries that didn't resolve to a valid URL
     list = list.filter(x => x.type !== "url" || x.target);
     if(list.length){
-      list = shuffle(list);
       state.list = list;
-      state.idx = 0;
-      showCurrent();
-      scheduleNext();
+      partitionList(list);
+      state.current = pickNextAd();
+      if(state.current){
+        showCurrent();
+        scheduleNext();
+      }
       state.lastFetch = now;
       setDebug(`Loaded ${state.list.length} ads • ${new Date().toLocaleTimeString()}`);
       return;
@@ -382,9 +455,12 @@ async function refreshListIfNeeded(force = false){
     throw new Error("Folder empty or all ads outside their schedule window");
   }catch(err){
     state.list = buildFallbackList(state.cfg);
-    state.idx = 0;
-    showCurrent();
-    scheduleNext();
+    partitionList(state.list);
+    state.current = pickNextAd();
+    if(state.current){
+      showCurrent();
+      scheduleNext();
+    }
     state.lastFetch = now;
     setDebug(`Fallback list (${state.list.length}) • ${new Date().toLocaleTimeString()}`);
   }

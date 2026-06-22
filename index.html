@@ -386,61 +386,74 @@ function showCurrent(){
 function partitionList(list){
   state.groups = {};
   state.nonGroup = [];
-  state.nonGroupIdx = 0;
-  state.slot = 0;
+  state.slots = [];     // ordered list of { type:"ad", ad } or { type:"group", name }
+  state.slotIdx = 0;
+
+  // 1) Bucket into groups + non-group
   for(const item of list){
     const s = parseSchedule(item.name);
     if(s.group){
-      const g = state.groups[s.group] || (state.groups[s.group] = { ads: [], interval: Infinity, idx: 0 });
+      const g = state.groups[s.group] || (state.groups[s.group] = { ads: [], idx: 0 });
       g.ads.push(item);
-      if(s.interval && s.interval >= 2) g.interval = Math.min(g.interval, s.interval);
     } else {
       state.nonGroup.push(item);
     }
   }
-  // Default behavior: treat the group as ONE rotation slot — one variant
-  // every (nonGroup + 1) slots, so a cycle = each non-group ad + one group pick.
-  for(const g of Object.values(state.groups)){
-    if(!isFinite(g.interval)){
-      g.interval = Math.max(1, state.nonGroup.length + 1);
-    }
-    // Shuffle group variants only if no manual order is set
-    if(!state.manualOrder) g.ads = shuffle(g.ads);
+
+  // 2) Shuffle variants within each group (unless manual order)
+  if(!state.manualOrder){
+    for(const g of Object.values(state.groups)) g.ads = shuffle(g.ads);
   }
-  if(!state.manualOrder) state.nonGroup = shuffle(state.nonGroup);
+
+  // 3) Build slot list
+  if(state.manualOrder){
+    // Preserve user's drag order. First occurrence of a group inserts its slot;
+    // subsequent occurrences of same-group ads are skipped (they're variants).
+    const seen = new Set();
+    for(const item of list){
+      const s = parseSchedule(item.name);
+      if(s.group){
+        if(!seen.has(s.group)){
+          seen.add(s.group);
+          state.slots.push({ type: "group", name: s.group });
+        }
+      } else {
+        state.slots.push({ type: "ad", ad: item });
+      }
+    }
+  } else {
+    // Auto-distribute: each group = ONE slot, evenly spaced across non-group ads.
+    const groupNames = Object.keys(state.groups).sort();
+    const nonGroup = shuffle(state.nonGroup);
+    const totalSlots = nonGroup.length + groupNames.length;
+    const groupAtPos = new Map();
+    groupNames.forEach((name, i) => {
+      let pos = Math.floor((i * totalSlots) / Math.max(1, groupNames.length));
+      // Avoid collisions if math lands two groups on the same slot
+      while(groupAtPos.has(pos)) pos = (pos + 1) % Math.max(1, totalSlots);
+      groupAtPos.set(pos, name);
+    });
+    let ng = 0;
+    for(let i = 0; i < totalSlots; i++){
+      if(groupAtPos.has(i)){
+        state.slots.push({ type: "group", name: groupAtPos.get(i) });
+      } else if(ng < nonGroup.length){
+        state.slots.push({ type: "ad", ad: nonGroup[ng++] });
+      }
+    }
+  }
 }
 
 function pickNextAd(){
-  // Any group due at this slot?
-  const due = [];
-  for(const [name, g] of Object.entries(state.groups)){
-    if(state.slot % g.interval === 0) due.push([name, g]);
-  }
-  if(due.length){
-    // Multi-due: rotate by slot for deterministic distribution
-    const [, g] = due[state.slot % due.length];
-    const ad = g.ads[g.idx % g.ads.length];
-    g.idx++;
-    state.slot++;
-    return ad;
-  }
-  if(state.nonGroup.length){
-    const ad = state.nonGroup[state.nonGroupIdx % state.nonGroup.length];
-    state.nonGroupIdx++;
-    state.slot++;
-    return ad;
-  }
-  // No non-group and no group due — fall back to any group's next ad
-  for(const g of Object.values(state.groups)){
-    if(g.ads.length){
-      const ad = g.ads[g.idx % g.ads.length];
-      g.idx++;
-      state.slot++;
-      return ad;
-    }
-  }
-  state.slot++;
-  return null;
+  if(!state.slots.length) return null;
+  const slot = state.slots[state.slotIdx % state.slots.length];
+  state.slotIdx++;
+  if(slot.type === "ad") return slot.ad;
+  const g = state.groups[slot.name];
+  if(!g || !g.ads.length) return null;
+  const ad = g.ads[g.idx % g.ads.length];
+  g.idx++;
+  return ad;
 }
 
 function scheduleNext(){

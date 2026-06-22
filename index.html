@@ -288,6 +288,31 @@ function parseGitHubContents(json){
   return files;
 }
 
+async function fetchPlaylistOrder(){
+  // Try the raw file from the repo root (works on GitHub Pages).
+  const base = inferRepoFromLocation()?.basePath || "./";
+  const url = base + "playlist-order.json?v=" + Date.now();
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if(!r.ok) return null;
+    const data = await r.json();
+    return Array.isArray(data) ? data : (data.order || null);
+  } catch { return null; }
+}
+
+function applyManualOrder(list, order){
+  if(!order || !order.length) return list;
+  const indexOf = (n) => {
+    const i = order.indexOf(n);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  return list.slice().sort((a,b) => {
+    const ai = indexOf(a.name), bi = indexOf(b.name);
+    if(ai !== bi) return ai - bi;
+    return a.name.localeCompare(b.name);
+  });
+}
+
 async function resolveUrlTargets(list){
   // For any .url entries, fetch the file contents (the target URL) in parallel.
   await Promise.all(list.map(async (item) => {
@@ -379,9 +404,10 @@ function partitionList(list){
     if(!isFinite(g.interval)){
       g.interval = Math.max(1, state.nonGroup.length + 1);
     }
-    g.ads = shuffle(g.ads);
+    // Shuffle group variants only if no manual order is set
+    if(!state.manualOrder) g.ads = shuffle(g.ads);
   }
-  state.nonGroup = shuffle(state.nonGroup);
+  if(!state.manualOrder) state.nonGroup = shuffle(state.nonGroup);
 }
 
 function pickNextAd(){
@@ -437,11 +463,14 @@ async function refreshListIfNeeded(force = false){
 
   try{
     let list = await fetchAdListViaGitHubAPI(state.cfg);
+    const manualOrder = await fetchPlaylistOrder();
     await resolveUrlTargets(list);
     // drop .url entries that didn't resolve to a valid URL
     list = list.filter(x => x.type !== "url" || x.target);
     if(list.length){
+      list = applyManualOrder(list, manualOrder);
       state.list = list;
+      state.manualOrder = !!(manualOrder && manualOrder.length);
       partitionList(list);
       state.current = pickNextAd();
       if(state.current){

@@ -486,6 +486,15 @@
     .bulk-bar button:hover { background: rgba(255,255,255,.25); }
     .bulk-bar button.danger { background: var(--danger); border-color: var(--danger); }
     .bulk-bar button.danger:hover { background: var(--danger-2); }
+
+    /* Drag-and-drop */
+    .ad { cursor: grab; }
+    .ad:active { cursor: grabbing; }
+    .ad.dragging { opacity: .35; }
+    .ad.drag-over {
+      outline: 2px dashed var(--accent);
+      outline-offset: 4px;
+    }
   </style>
 </head>
 <body>
@@ -1117,6 +1126,96 @@ $("uploadBtn").addEventListener("click", async () => {
   refreshList();
 });
 
+/* ── playlist order (drag-and-drop) ────── */
+const ORDER_FILE = "playlist-order.json";
+let orderState = { order: [], sha: null }; // current saved order + file sha
+
+async function loadOrder(){
+  const cfg = loadCfg();
+  try {
+    const data = await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${ORDER_FILE}?ref=${encodeURIComponent(cfg.branch||"main")}`);
+    const text = atob((data.content || "").replace(/\n/g,""));
+    const parsed = JSON.parse(text);
+    orderState = { order: Array.isArray(parsed) ? parsed : (parsed.order || []), sha: data.sha };
+  } catch(err) {
+    if(err.status === 404){ orderState = { order: [], sha: null }; }
+    else { orderState = { order: [], sha: null }; }
+  }
+}
+
+async function saveOrder(newOrder){
+  const cfg = loadCfg();
+  const body = {
+    message: "admin: update playlist order",
+    content: btoa(unescape(encodeURIComponent(JSON.stringify(newOrder, null, 2) + "\n"))),
+    branch: cfg.branch
+  };
+  if(orderState.sha) body.sha = orderState.sha;
+  const res = await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${ORDER_FILE}`, {
+    method: "PUT",
+    body: JSON.stringify(body)
+  });
+  orderState = { order: newOrder, sha: res.content.sha };
+}
+
+function sortFilesByOrder(files){
+  if(!orderState.order.length) return files;
+  const indexOf = (n) => {
+    const i = orderState.order.indexOf(n);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  return files.slice().sort((a,b) => {
+    const ai = indexOf(a.name), bi = indexOf(b.name);
+    if(ai !== bi) return ai - bi;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+let saveOrderTimer = null;
+function queueSaveOrder(){
+  clearTimeout(saveOrderTimer);
+  saveOrderTimer = setTimeout(async () => {
+    const newOrder = Array.from(document.querySelectorAll(".ad")).map(c => c._file.name);
+    try { await saveOrder(newOrder); }
+    catch(err) { alert("Failed to save order: " + err.message); }
+  }, 500);
+}
+
+let draggedCard = null;
+function attachDragHandlers(card){
+  card.setAttribute("draggable", "true");
+  card.addEventListener("dragstart", (e) => {
+    draggedCard = card;
+    card.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    // Some browsers need this for drag to work
+    try { e.dataTransfer.setData("text/plain", card._file.name); } catch {}
+  });
+  card.addEventListener("dragend", () => {
+    card.classList.remove("dragging");
+    document.querySelectorAll(".ad.drag-over").forEach(c => c.classList.remove("drag-over"));
+    draggedCard = null;
+  });
+  card.addEventListener("dragover", (e) => {
+    if(!draggedCard || draggedCard === card) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    card.classList.add("drag-over");
+  });
+  card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
+  card.addEventListener("drop", (e) => {
+    e.preventDefault();
+    card.classList.remove("drag-over");
+    if(!draggedCard || draggedCard === card) return;
+    const parent = card.parentNode;
+    const rect = card.getBoundingClientRect();
+    const insertAfter = (e.clientY - rect.top) > rect.height / 2;
+    if(insertAfter) parent.insertBefore(draggedCard, card.nextSibling);
+    else            parent.insertBefore(draggedCard, card);
+    queueSaveOrder();
+  });
+}
+
 /* ── multi-select + bulk delete ──────────── */
 const selectedFiles = new Map(); // name -> file object
 
@@ -1177,11 +1276,12 @@ async function refreshList(){
   }
   elList.innerHTML = '<div class="empty"><span class="spin"></span> Loading…</div>';
   try {
+    await loadOrder();
     const items = await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${ADS_FOLDER}?ref=${encodeURIComponent(cfg.branch||"main")}`);
-    const files = (Array.isArray(items) ? items : []).filter(x => x.type === "file" && EXT_RE.test(x.name));
+    let files = (Array.isArray(items) ? items : []).filter(x => x.type === "file" && EXT_RE.test(x.name));
     elListCount.textContent = files.length ? `${files.length} item${files.length===1?"":"s"}` : "";
     if(!files.length){ elList.innerHTML = '<div class="empty">No items yet. Upload an image or add a URL above.</div>'; return; }
-    files.sort((a,b) => a.name.localeCompare(b.name));
+    files = sortFilesByOrder(files);
 
     // Fetch target URLs for any .url entries (parallel).
     await Promise.all(files.map(async (f) => {
@@ -1244,6 +1344,7 @@ async function refreshList(){
         toggleSelect(card, f);
       });
       card._file = f;
+      attachDragHandlers(card);
       grid.appendChild(card);
     }
     elList.innerHTML = "";

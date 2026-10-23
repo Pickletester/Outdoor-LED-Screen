@@ -759,6 +759,11 @@
           </div>
         </div>
 
+        <div class="field-group" id="mReplaceWrap">
+          <label>Replace picture <span style="text-transform:none;color:var(--text-faint)">(keeps this ad's dates, group and place in the playlist)</span></label>
+          <input id="mReplace" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+        </div>
+
         <div id="mStatus" class="status"></div>
       </div>
       <div class="modal-foot">
@@ -1366,6 +1371,8 @@ function openEditor(file){
   editing.isUrl = isUrl;
 
   // Thumbnail: for URL cards we don't have an image — swap to a placeholder.
+  $("mReplace").value = "";
+  $("mReplaceWrap").style.display = isUrl ? "none" : "";
   if(isUrl){
     $("mThumb").style.display = "none";
     $("mUrlWrap").style.display = "flex";
@@ -1473,7 +1480,7 @@ $("mSave").addEventListener("click", async () => {
     setStatus($("mStatus"), "err", "Interval requires a group name."); return;
   }
 
-  const newName = buildFilename(f.name, {
+  const scheduleOpts = {
     startISO: start,
     endISO: end,
     durationSec: $("mDuration").value,
@@ -1481,7 +1488,24 @@ $("mSave").addEventListener("click", async () => {
     weekdayRule: rule,
     group: groupVal,
     interval: intervalVal
-  });
+  };
+  const picked = $("mReplace").files[0];
+  if(picked && !editing.isUrl){
+    if(!IMG_EXT_RE.test(picked.name)){
+      setStatus($("mStatus"), "err", "Replacement must be PNG, JPG, WEBP or GIF."); return;
+    }
+    setStatus($("mStatus"), "ok", `<span class="spin"></span> Replacing picture…`);
+    try {
+      await replacePicture(f, picked, buildFilename(picked.name, scheduleOpts));
+      closeEditor();
+      refreshList();
+    } catch(err){
+      setStatus($("mStatus"), "err", "Replace failed: " + err.message);
+    }
+    return;
+  }
+
+  const newName = buildFilename(f.name, scheduleOpts);
 
   const urlChanged = editing.isUrl && newTarget && newTarget !== f._target;
   const nameChanged = newName !== f.name;
@@ -1500,6 +1524,36 @@ $("mSave").addEventListener("click", async () => {
     setStatus($("mStatus"), "err", "Save failed: " + err.message);
   }
 });
+
+/* Swaps the picture for one ad. The new file takes the old one's place in the playlist. */
+async function replacePicture(oldFile, picked, newName){
+  const cfg = loadCfg();
+  const oldPath = `${ADS_FOLDER}/${oldFile.name}`;
+  const newPath = `${ADS_FOLDER}/${newName}`;
+  const content = await fileToBase64(picked);
+
+  if(newPath === oldPath){
+    // Same file name: overwrite the picture in place.
+    await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}`, {
+      method: "PUT",
+      body: JSON.stringify({ message: `admin: replace picture ${oldFile.name}`, content, sha: oldFile.sha, branch: cfg.branch })
+    });
+    return;
+  }
+
+  // Different name: add the new picture, remove the old one, then update the playlist order.
+  await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${newPath}`, {
+    method: "PUT",
+    body: JSON.stringify({ message: `admin: add ${newName} (replaces ${oldFile.name})`, content, branch: cfg.branch })
+  });
+  await apiFetch(`/repos/${cfg.owner}/${cfg.repo}/contents/${oldPath}`, {
+    method: "DELETE",
+    body: JSON.stringify({ message: `admin: remove replaced ${oldFile.name}`, sha: oldFile.sha, branch: cfg.branch })
+  });
+  if(orderState.order.includes(oldFile.name)){
+    await saveOrder(orderState.order.map(n => n === oldFile.name ? newName : n));
+  }
+}
 
 /* For .url files: update content and/or rename atomically. */
 async function saveUrlFile(oldFile, newName, newTarget){
